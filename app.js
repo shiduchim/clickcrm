@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.0.2';
+  const CLIENT_VERSION = '1.2.0';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -263,11 +263,11 @@
   }
 
   /** Sends an email. Never retried automatically. Returns {status:'sent'|'failed'|'unknown', message}. */
-  async function sendEmail(action, payload, reqId) {
+  async function sendEmail(action, payload, reqId, timeout) {
     if (!tokenValid()) { showSignin('Sign in again, then press Send.'); return { status: 'failed', message: 'Sign in again, then press Send.' }; }
     S.busy++; updateSyncPill();
     try {
-      const data = await api(action, payload, { reqId, timeout: 120000 });
+      const data = await api(action, payload, { reqId, timeout: timeout || 120000 });
       await applyResult(data);
       return { status: 'sent' };
     } catch (e) {
@@ -288,6 +288,8 @@
     S.settings = b.settings || {};
     S.me = b.me || S.email;
     S.sentToday = b.sentToday || 0;
+    S.autoToday = b.autoToday || 0;
+    S.bouncesToday = b.bouncesToday || 0;
     S.lastSync = b.lastSync || '';
     S.lastBackup = b.lastBackup || '';
     S.lastRefresh = Date.now();
@@ -418,8 +420,10 @@
           </section>
           <section class="panel">
             <div class="panel-head"><h2>Ready to contact<span class="count">${readyAll.length || ''}</span></h2>
-              <a href="#/companies" data-act="filter-status" data-status="${esc(CONSENT.NONE)}" class="small">See all</a></div>
+              <div class="actions"><a href="#/companies" data-act="filter-status" data-status="${esc(CONSENT.NONE)}" class="small">See all</a>
+              ${readyAll.length ? '<button class="btn small primary" data-act="batch">Send batch now</button>' : ''}</div></div>
             <div class="meter"><span>Sent today: ${S.sentToday} of ${limit}</span><span class="meter-bar"><i style="width:${pct}%"></i></span></div>
+            ${autoLine()}
             ${ready.length ? ready.map(c => `
               <div class="ready-row">
                 <div class="grow"><a href="#/company/${encodeURIComponent(c.id)}" dir="auto">${esc(primaryName(c))}</a>
@@ -452,6 +456,28 @@
     return d || primaryName(a).localeCompare(primaryName(b));
   }
 
+  function isShabbat() {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short', hour: 'numeric', hourCycle: 'h23' }).formatToParts(new Date());
+    const wd = (parts.find(p => p.type === 'weekday') || {}).value;
+    const hr = Number((parts.find(p => p.type === 'hour') || {}).value);
+    return wd === 'Sat' || (wd === 'Fri' && hr >= 12);
+  }
+  function batchCandidates() {
+    const conf = S.settings.autoConfidence || 'High,Medium';
+    const allowed = conf === 'High' ? ['High'] : conf === 'All' ? null : ['High', 'Medium'];
+    return S.companies.filter(c => !isArchived(c) && status(c) === CONSENT.NONE && c.email &&
+      (!allowed || allowed.indexOf(c.revitConfidence) >= 0));
+  }
+
+  function autoLine() {
+    const s = S.settings;
+    if (s.autoPausedReason) return `<p class="notice danger small">${esc(s.autoPausedReason)} <a href="#/settings">Settings</a></p>`;
+    if (s.autoSend === 'TRUE') {
+      return `<p class="notice calm small">Automatic sending is on: ${S.autoToday} of ${esc(s.autoPerDay)} sent today. It runs Sunday–Thursday, 08:00–17:00. <a href="#/settings">Change</a></p>`;
+    }
+    return `<p class="small muted">Automatic sending is off. <a href="#/settings">Turn it on in Settings</a>.</p>`;
+  }
+
   function replyCard(a) {
     const c = companyById(a.companyId) || { id: a.companyId, nameEn: a.companyName };
     return `
@@ -464,6 +490,11 @@
       </article>`;
   }
   function reviewButtons(a, c) {
+    if (a.kind === 'bounce') {
+      return `<p class="reply-hint">This email bounced: the address is probably wrong. Fix the email on the company page, then use Consent → Change → “Not contacted” with the reason “bounced”.</p>
+        <div class="actions"><a class="btn small" href="#/company/${encodeURIComponent(c.id)}">Open company</a>
+        <button class="btn small ghost" data-act="review" data-id="${esc(a.id)}" data-decision="read">Mark as read</button></div>`;
+    }
     const sug = a.suggest || '';
     const hint = { yes: 'This looks like a yes.', no: 'This looks like a no.', unsub: 'This looks like a removal request.' }[sug];
     const b = (decision, text) => `<button class="btn small ${sug === decision ? 'suggested' : ''}" data-act="review" data-id="${esc(a.id)}" data-decision="${decision}">${text}</button>`;
@@ -693,7 +724,7 @@
     const gmail = a.threadId ? `<a class="btn small ghost" target="_blank" rel="noopener" href="${esc(gmailUrl('all/' + a.threadId))}">Open in Gmail</a>` : '';
     if (a.type === 'email_in') {
       return `<li class="act act-in ${a.unread === 'TRUE' ? 'is-new' : ''}">
-        <div class="act-head"><span class="act-kind">Email received</span>${a.unread === 'TRUE' ? '<span class="new-dot">New</span>' : ''}${when}</div>
+        <div class="act-head"><span class="act-kind">${a.kind === 'bounce' ? 'Email bounced' : 'Email received'}</span>${a.unread === 'TRUE' ? '<span class="new-dot">New</span>' : ''}${when}</div>
         <div class="act-line" dir="auto">From ${esc(a.fromAddr)}</div>
         <div class="act-subj" dir="auto">${esc(a.subject)}</div>
         ${bodyBlock(a.body)}
@@ -892,6 +923,21 @@
           <div class="actions" style="margin-top:12px"><button class="btn primary" data-act="save-settings">Save settings</button></div>
         </section>
         <div class="stack">
+          <section class="panel" id="auto-form">
+            <div class="panel-head"><h2>Automatic sending</h2></div>
+            ${s.autoPausedReason ? `<p class="notice danger small">${esc(s.autoPausedReason)}</p>` : ''}
+            <label class="check"><input type="checkbox" name="autoSend" ${s.autoSend === 'TRUE' ? 'checked' : ''}><span>Send consent requests automatically</span></label>
+            <div class="form-grid" style="margin-top:8px">
+              <label class="field"><span>Requests per day</span><input name="autoPerDay" type="number" min="1" max="90" value="${esc(s.autoPerDay || 50)}"></label>
+              <label class="field"><span>Which companies</span><select name="autoConfidence">
+                ${[['High', 'High Revit confidence only'], ['High,Medium', 'High and Medium'], ['All', 'All with an email']].map(([v, l]) => `<option value="${v}" ${v === (s.autoConfidence || 'High,Medium') ? 'selected' : ''}>${l}</option>`).join('')}
+              </select></label>
+            </div>
+            <p class="hint" style="margin-top:8px">Sends to “Not contacted” companies, highest confidence first, spread over Sunday–Thursday 08:00–17:00 (a few every 10 minutes). Each company still gets only one request. The daily email limit on the left is the overall cap, so set it a little higher than this number to leave room for product emails. It pauses itself if many emails bounce.</p>
+            <p class="small" style="margin-top:6px">Today: ${S.autoToday || 0} sent automatically, ${S.bouncesToday || 0} bounced.</p>
+            <p class="form-error" id="auto-error"></p>
+            <div class="actions" style="margin-top:10px"><button class="btn primary" data-act="save-auto">Save automatic sending</button></div>
+          </section>
           <section class="panel">
             <div class="panel-head"><h2>Added to every product email</h2></div>
             <pre class="footer-preview" dir="rtl">${esc(footerText())}</pre>
@@ -1161,6 +1207,58 @@
     }
   }
 
+  function batchModal() {
+    if (isShabbat()) { toast('No sending on Shabbat. Batches can be sent from Sunday until Friday 12:00.', 'warn'); return; }
+    const limit = Number(S.settings.dailyLimit || 20);
+    const left = Math.max(0, limit - S.sentToday);
+    const avail = batchCandidates().length;
+    const conf = { High: 'High Revit confidence only', 'High,Medium': 'High and Medium Revit confidence', All: 'all companies with an email' }[S.settings.autoConfidence || 'High,Medium'];
+    const max = Math.min(left, avail, 90);
+    const m = openModal('Send batch now', `
+      <p class="small">Sends the consent request right now to the next companies on your list: “Not contacted”, ${esc(conf)}, best first. Each company still gets only one request.</p>
+      <dl class="kv"><dt>Companies waiting</dt><dd>${avail}</dd><dt>Left in today’s limit</dt><dd>${left} of ${limit}</dd></dl>
+      ${max ? `<label class="field"><span>How many to send now</span><input name="count" type="number" min="1" max="${max}" value="${Math.min(max, 20)}"></label>
+        <p class="hint">Takes about 3 seconds per email. Keep this window open until it finishes.</p>`
+        : `<div class="notice">${left ? 'No companies are waiting for a request.' : 'Today’s limit is reached. Raise it in Settings, or continue tomorrow.'}</div>`}
+      <div class="send-status" aria-live="polite"></div>`,
+      `<button class="btn" data-act="close-modal">Cancel</button>${max ? '<button class="btn primary" data-send>Send batch</button>' : ''}`);
+    if (!max) return;
+    const btn = $('[data-send]', m);
+    const box = $('.send-status', m);
+    const cancel = $('.modal-foot [data-act="close-modal"]', m);
+    const reqId = newReqId();
+    btn.addEventListener('click', async () => {
+      const n = Math.round(Number(formData(m).count));
+      if (!(n >= 1 && n <= max)) { box.className = 'send-status error'; box.textContent = `Choose a number between 1 and ${max}.`; return; }
+      btn.disabled = true; lockModal(true);
+      box.className = 'send-status working'; box.textContent = `Sending ${n} requests… about ${Math.ceil(n * 3 / 60)} min. Keep this window open.`;
+      let result = null;
+      S.busy++; updateSyncPill();
+      try {
+        const data = await api('sendBatch', { count: n }, { reqId, timeout: 300000 });
+        result = data.batch;
+        await applyResult(data);
+      } catch (e) {
+        lockModal(false); S.busy--; updateSyncPill();
+        if (e.unknown) {
+          box.className = 'send-status unknown';
+          box.innerHTML = '<b>The connection dropped, but the batch may still be running.</b> Nothing will be sent twice. Wait a few minutes, then use “Reload data” in Settings to see the results.';
+        } else { box.className = 'send-status error'; box.textContent = e.message; btn.disabled = false; }
+        return;
+      }
+      lockModal(false); S.busy--; updateSyncPill();
+      const parts = [`${plural(result.sent, 'request', 'requests')} sent`];
+      if (result.unknown) parts.push(`${result.unknown} not confirmed by Gmail (check Gmail Sent; they won’t be resent)`);
+      if (result.failed) parts.push(`${result.failed} skipped (see each company’s history)`);
+      if (result.stopped === 'limit') parts.push('stopped at today’s limit');
+      if (result.stopped === 'time') parts.push('stopped after 4 minutes; send another batch for the rest');
+      box.className = 'send-status ' + (result.sent ? 'ok' : 'error');
+      box.textContent = parts.join('. ') + '.';
+      btn.hidden = true; cancel.textContent = 'Close';
+      toast(`${plural(result.sent, 'request', 'requests')} sent`);
+    });
+  }
+
   function composeConsent(id) {
     const c = companyById(id);
     if (!c) return;
@@ -1318,6 +1416,7 @@
       } catch (e) { toast(e.message, 'error'); $$('button', box).forEach(b => { b.disabled = false; }); }
     },
     'compose-consent': el => composeConsent(el.dataset.id),
+    'batch': () => batchModal(),
     'compose-product': el => composeProduct(el.dataset.id),
     'compose-reply': el => composeReply(el.dataset.thread, el.dataset.company),
     'edit-product': el => productModal(el.dataset.id ? productById(el.dataset.id) : null),
@@ -1327,6 +1426,20 @@
       err.textContent = '';
       el.disabled = true;
       try { const r = await write('saveSettings', d, 'Settings saved'); if (r) toast('Settings saved'); } catch (e) { err.textContent = e.message; }
+      el.disabled = false;
+    },
+    'save-auto': async el => {
+      const d = formData($('#auto-form'));
+      const err = $('#auto-error');
+      err.textContent = '';
+      if (d.autoSend && Number(d.autoPerDay) > Number(S.settings.dailyLimit || 20)) {
+        err.textContent = `Your overall daily limit is ${S.settings.dailyLimit || 20}. Raise it on the left (and save) to at least ${d.autoPerDay}, or automatic sending will stop at the limit.`;
+      }
+      el.disabled = true;
+      try {
+        const r = await write('saveSettings', { autoSend: !!d.autoSend, autoPerDay: d.autoPerDay, autoConfidence: d.autoConfidence }, 'Automatic sending saved');
+        if (r) toast(d.autoSend ? 'Automatic sending is on' : 'Automatic sending is off');
+      } catch (e) { err.textContent = e.message; }
       el.disabled = false;
     },
     'expand': el => { const body = el.previousElementSibling; body.classList.remove('clamp'); el.remove(); },
