@@ -426,7 +426,9 @@
                   <div class="small muted">${esc([c.city, c.segment].filter(Boolean).join(', '))}</div></div>
                 ${confHtml(c.revitConfidence)}
                 <button class="btn small" data-act="compose-consent" data-id="${esc(c.id)}">Send request</button>
-              </div>`).join('') : '<p class="empty">Everyone with an email address has been contacted. Import more companies to continue.</p>'}
+              </div>`).join('') : (live.length
+                ? '<p class="empty">Everyone with an email address has been contacted. Import more companies to continue.</p>'
+                : '<p class="empty">No companies yet. <a href="#/import">Import your list</a> to start.</p>')}
           </section>
         </div>
         <div class="stack">
