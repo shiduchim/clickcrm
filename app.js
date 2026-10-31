@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.0.0';
+  const CLIENT_VERSION = '1.0.2';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -674,6 +674,7 @@
         ${row('Revit evidence', esc(c.revitEvidence))}
         ${row('Evidence page', link(c.evidenceUrl, 'Open'))}
         ${row('Email found at', link(c.sourceUrl, 'Open'))}
+        ${row('Contact page', link(c.contactUrl, 'Open'))}
         ${row('Notes', esc(c.notes))}
         ${row('Added', esc(fmtDateTime(c.createdAt)))}
       </dl>
@@ -770,7 +771,7 @@
             <label class="field full"><span>Or paste the CSV text</span><textarea id="import-text" class="tall" dir="ltr" placeholder="&quot;Company Name (English)&quot;,&quot;Company Name (Hebrew)&quot;,..."></textarea></label>
           </div>
           <div class="actions" style="margin-top:10px"><button class="btn" data-act="import-parse">Check pasted text</button></div>
-          <p class="hint" style="margin-top:8px">Recognized columns: company name (English/Hebrew), segment, city, website, general email, email source URL, phone, LinkedIn, Revit evidence, evidence URL, Revit confidence, employees, notes. “NOT FOUND” values are left empty.</p>
+          <p class="hint" style="margin-top:8px">Recognized columns: company name (English/Hebrew), segment, city, website, general email, email source URL, contact page URL, phone, LinkedIn, Revit evidence, evidence URL, Revit confidence, employees, notes. “NOT FOUND” values are left empty.</p>
         </section>
         ${preview}
       </div>`;
@@ -799,16 +800,17 @@
   const IMPORT_RULES = [
     ['nameHe', h => /hebrew|עברית/.test(h)],
     ['nameEn', h => /(company|name)/.test(h) && !/contact|named/.test(h)],
+    ['contactUrl', h => /contact (page|url|form)/.test(h)],
     ['sourceUrl', h => /email source|source url/.test(h)],
     ['evidenceUrl', h => /evidence url/.test(h)],
-    ['revitEvidence', h => /evidence/.test(h)],
+    ['revitEvidence', h => /evidence/.test(h) && !/date|type/.test(h)],
     ['revitConfidence', h => /confidence/.test(h)],
     ['email', h => /e-?mail/.test(h) && !/named|contact|source/.test(h)],
     ['linkedin', h => /linkedin/.test(h)],
     ['website', h => /website|^site$|^url$|domain/.test(h)],
     ['phone', h => /phone|טלפון/.test(h)],
     ['city', h => /city|עיר/.test(h)],
-    ['segment', h => /segment|category|type/.test(h)],
+    ['segment', h => /segment|category|type/.test(h) && !/evidence/.test(h)],
     ['employees', h => /employee|size/.test(h)],
     ['notes', h => /note/.test(h)]
   ];
@@ -986,6 +988,7 @@
         ${field('Revit evidence', 'revitEvidence', c.revitEvidence, { full: true })}
         ${field('Evidence page', 'evidenceUrl', c.evidenceUrl, { dir: 'ltr' })}
         ${field('Where the email was found', 'sourceUrl', c.sourceUrl, { dir: 'ltr' })}
+        ${field('Contact page', 'contactUrl', c.contactUrl, { dir: 'ltr' })}
         ${field('Notes', 'notes', c.notes, { full: true, textarea: true })}
       </div>`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-save>${c.id ? 'Save changes' : 'Add company'}</button>`, { wide: true });
@@ -1024,7 +1027,7 @@
         ${field('Follow-up to-do (optional)', 'taskText', '')}
         <label class="field"><span>Follow-up date</span><input type="date" name="taskDate"></label>
       </div>
-      <p class="hint">If they agreed on the phone to receive information, also use “Change” in the Consent panel and write down when and who.</p>`,
+      <p class="hint">If they want product emails, ask them to confirm by email. Phone consent isn’t enough as proof.</p>`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-save>Save call</button>`);
     bindSave(m, 'logCall', d => {
       if (!d.summary) throw new Error('Write a short summary of the call.');
@@ -1069,14 +1072,15 @@
   function consentModal(c) {
     const st = status(c);
     const m = openModal('Change consent status', `
-      <p class="small">Use this when something happened outside the CRM, for example they agreed by phone, or a request was marked as sent but never left Gmail.</p>
+      <p class="small">Use this when something happened outside the CRM, for example they agreed in an email the CRM didn’t catch, or a request was marked as sent but never left Gmail. A “Yes” needs written consent (an email), not a phone call.</p>
       <label class="field"><span>New status</span><select name="status">${CONSENT_LIST.map(s => `<option ${s === st ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label>
-      <label class="field"><span>What happened (required for “Yes”, it is your proof)</span><textarea name="note" dir="auto" placeholder="Dana from the office agreed by phone on 3 Nov"></textarea></label>
+      <label class="field"><span>What happened (required for “Yes” and for resetting a sent request)</span><textarea name="note" dir="auto" placeholder="Replied “כן” by email on 3 Nov from dana@firm.co.il"></textarea></label>
       ${st === CONSENT.NO || st === CONSENT.UNSUB ? `<div class="notice danger">This company asked not to be contacted.</div>
         <label class="check"><input type="checkbox" name="confirm"><span>I have their new, clear permission.</span></label>` : ''}`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-save>Save status</button>`);
     bindSave(m, 'setConsent', d => {
       if (d.status === CONSENT.YES && !d.note) throw new Error('Write how they agreed. This is your proof of consent.');
+      if (st === CONSENT.SENT && d.status === CONSENT.NONE && !d.note) throw new Error('Write why the request should be reset. Only reset it if the request really was not sent.');
       if ((st === CONSENT.NO || st === CONSENT.UNSUB) && d.status !== st && !d.confirm) throw new Error('Tick the box to confirm you have their new permission.');
       return { companyId: c.id, status: d.status, note: d.note, confirm: !!d.confirm || !(st === CONSENT.NO || st === CONSENT.UNSUB) };
     }, 'Status saved');
