@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.2.0';
+  const CLIENT_VERSION = '1.3.0';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -24,7 +24,7 @@
     serverVersion: '',
     versionWarned: false,
     lastRefresh: 0,
-    filters: { q: '', status: '', segment: '', product: '', conf: '', archived: false, sort: 'name' },
+    filters: { q: '', status: '', segment: '', product: '', conf: '', email: '', archived: false, sort: 'name' },
     importRows: null
   };
   const inflight = new Set();
@@ -491,8 +491,9 @@
   }
   function reviewButtons(a, c) {
     if (a.kind === 'bounce') {
-      return `<p class="reply-hint">This email bounced: the address is probably wrong. Fix the email on the company page, then use Consent → Change → “Not contacted” with the reason “bounced”.</p>
-        <div class="actions"><a class="btn small" href="#/company/${encodeURIComponent(c.id)}">Open company</a>
+      return `<p class="reply-hint">This email bounced, so the request never arrived. “Bad address” removes the address (it’s kept in the notes) and sets the company back to “Not contacted”, so you can add a correct address later.</p>
+        <div class="actions"><button class="btn small primary" data-act="bounced" data-id="${esc(a.id)}">Bad address</button>
+        <a class="btn small" href="#/company/${encodeURIComponent(c.id)}">Open company</a>
         <button class="btn small ghost" data-act="review" data-id="${esc(a.id)}" data-decision="read">Mark as read</button></div>`;
     }
     const sug = a.suggest || '';
@@ -527,6 +528,8 @@
     if (f.segment) list = list.filter(c => (c.segment || '') === f.segment);
     if (f.conf) list = list.filter(c => (c.revitConfidence || '') === (f.conf === 'none' ? '' : f.conf));
     if (f.product) list = list.filter(c => c.productStatus && c.productStatus[f.product]);
+    if (f.email === 'missing') list = list.filter(c => !c.email);
+    if (f.email === 'has') list = list.filter(c => c.email);
     if (q) list = list.filter(c => matchesQuery(c, q, qDigits));
     const sorts = {
       name: (a, b) => primaryName(a).localeCompare(primaryName(b)),
@@ -557,6 +560,7 @@
         <select data-filter="segment" aria-label="Segment">${opt('', 'Any segment', f.segment)}${segments.map(s => opt(s, s, f.segment)).join('')}</select>
         <select data-filter="conf" aria-label="Revit confidence">${opt('', 'Any Revit confidence', f.conf)}${['High', 'Medium', 'Low'].map(s => opt(s, s, f.conf)).join('')}${opt('none', 'Unknown', f.conf)}</select>
         <select data-filter="product" aria-label="Product">${opt('', 'Any product', f.product)}${S.products.map(p => opt(p.id, 'Has ' + p.name + ' status', f.product)).join('')}</select>
+        <select data-filter="email" aria-label="Email">${opt('', 'Any email', f.email)}${opt('has', 'Has email', f.email)}${opt('missing', 'No email (find one)', f.email)}</select>
         <select data-filter="sort" aria-label="Sort">${opt('name', 'Sort by name', f.sort)}${opt('updated', 'Recently updated', f.sort)}${opt('confidence', 'Revit confidence', f.sort)}</select>
         <label class="check"><input type="checkbox" data-filter="archived" ${f.archived ? 'checked' : ''}> Archived</label>
       </div>
@@ -1413,6 +1417,14 @@
       try {
         const r = await write('reviewReply', { activityId: el.dataset.id, decision: el.dataset.decision }, labels[el.dataset.decision]);
         if (r) toast(labels[el.dataset.decision]);
+      } catch (e) { toast(e.message, 'error'); $$('button', box).forEach(b => { b.disabled = false; }); }
+    },
+    'bounced': async el => {
+      const box = el.closest('.actions');
+      $$('button', box).forEach(b => { b.disabled = true; });
+      try {
+        const r = await write('markBounced', { activityId: el.dataset.id }, 'Bad address removed');
+        if (r) toast('Address removed. The company is back to “Not contacted”.');
       } catch (e) { toast(e.message, 'error'); $$('button', box).forEach(b => { b.disabled = false; }); }
     },
     'compose-consent': el => composeConsent(el.dataset.id),
