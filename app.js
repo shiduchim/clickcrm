@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.3.0';
+  const CLIENT_VERSION = '1.4.0';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -290,6 +290,7 @@
     S.sentToday = b.sentToday || 0;
     S.autoToday = b.autoToday || 0;
     S.bouncesToday = b.bouncesToday || 0;
+    S.autoProductToday = b.autoProductToday || 0;
     S.lastSync = b.lastSync || '';
     S.lastBackup = b.lastBackup || '';
     S.lastRefresh = Date.now();
@@ -424,6 +425,7 @@
               ${readyAll.length ? '<button class="btn small primary" data-act="batch">Send batch now</button>' : ''}</div></div>
             <div class="meter"><span>Sent today: ${S.sentToday} of ${limit}</span><span class="meter-bar"><i style="width:${pct}%"></i></span></div>
             ${autoLine()}
+            ${autoProductLine()}
             ${ready.length ? ready.map(c => `
               <div class="ready-row">
                 <div class="grow"><a href="#/company/${encodeURIComponent(c.id)}" dir="auto">${esc(primaryName(c))}</a>
@@ -469,6 +471,18 @@
       (!allowed || allowed.indexOf(c.revitConfidence) >= 0));
   }
 
+  function productQueue(pid) {
+    const withPeople = new Set(S.people.filter(p => p.email).map(p => p.companyId));
+    const unreadCo = new Set(S.unread.filter(a => a.type === 'email_in').map(a => a.companyId));
+    const ready = [], manual = [];
+    S.companies.forEach(c => {
+      if (isArchived(c) || status(c) !== CONSENT.YES) return;
+      if ((c.productStatus || {})[pid] || unreadCo.has(c.id)) return;
+      (withPeople.has(c.id) ? manual : ready).push(c);
+    });
+    return { ready, manual };
+  }
+
   function autoLine() {
     const s = S.settings;
     if (s.autoPausedReason) return `<p class="notice danger small">${esc(s.autoPausedReason)} <a href="#/settings">Settings</a></p>`;
@@ -476,6 +490,13 @@
       return `<p class="notice calm small">Automatic sending is on: ${S.autoToday} of ${esc(s.autoPerDay)} sent today. It runs Sunday–Thursday, 08:00–17:00. <a href="#/settings">Change</a></p>`;
     }
     return `<p class="small muted">Automatic sending is off. <a href="#/settings">Turn it on in Settings</a>.</p>`;
+  }
+  function autoProductLine() {
+    const s = S.settings;
+    if (s.autoProduct !== 'TRUE') return '';
+    const p = productById(s.autoProductId);
+    const q = productQueue(s.autoProductId);
+    return `<p class="notice calm small">Automatic ${esc(p ? p.name : 'product')} emails are on: ${S.autoProductToday || 0} sent today, ${q.ready.length} waiting${q.manual.length ? `, ${q.manual.length} for you to send by hand` : ''}. <a href="#/settings">Change</a></p>`;
   }
 
   function replyCard(a) {
@@ -941,6 +962,24 @@
             <p class="small" style="margin-top:6px">Today: ${S.autoToday || 0} sent automatically, ${S.bouncesToday || 0} bounced.</p>
             <p class="form-error" id="auto-error"></p>
             <div class="actions" style="margin-top:10px"><button class="btn primary" data-act="save-auto">Save automatic sending</button></div>
+          </section>
+          <section class="panel" id="autoprod-form">
+            <div class="panel-head"><h2>Automatic product emails</h2></div>
+            ${(() => {
+              const prods = activeProducts();
+              const pid = s.autoProductId || (prods[0] && prods[0].id) || '';
+              const q = productQueue(pid);
+              return `
+              <label class="check"><input type="checkbox" name="autoProduct" ${s.autoProduct === 'TRUE' ? 'checked' : ''}><span>Send the product email automatically to companies that said yes</span></label>
+              <label class="field" style="margin-top:8px"><span>Product</span><select name="autoProductId">
+                ${prods.map(p => `<option value="${esc(p.id)}" ${p.id === pid ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+              <p class="hint" style="margin-top:8px">One email every 10 minutes, Sunday–Thursday 08:00–17:00, using the product’s pitch text. It goes to the address that said yes. Each company gets it once. Companies with an unread reply wait until you review it.</p>
+              <p class="small" style="margin-top:6px">Waiting: ${q.ready.length}. Sent automatically today: ${S.autoProductToday || 0}.</p>
+              ${q.manual.length ? `<p class="small" style="margin-top:6px">Send these yourself, because you added people there (choose who gets it): ${q.manual.map(c => `<a href="#/company/${encodeURIComponent(c.id)}" dir="auto">${esc(primaryName(c))}</a>`).join(', ')}</p>` : ''}
+              ${!s.senderAddress ? '<p class="notice danger small" style="margin-top:6px">Add your postal address on the left first. It’s required in product emails.</p>' : ''}
+              <p class="form-error" id="autoprod-error"></p>
+              <div class="actions" style="margin-top:10px"><button class="btn primary" data-act="save-autoprod">Save automatic product emails</button></div>`;
+            })()}
           </section>
           <section class="panel">
             <div class="panel-head"><h2>Added to every product email</h2></div>
@@ -1451,6 +1490,17 @@
       try {
         const r = await write('saveSettings', { autoSend: !!d.autoSend, autoPerDay: d.autoPerDay, autoConfidence: d.autoConfidence }, 'Automatic sending saved');
         if (r) toast(d.autoSend ? 'Automatic sending is on' : 'Automatic sending is off');
+      } catch (e) { err.textContent = e.message; }
+      el.disabled = false;
+    },
+    'save-autoprod': async el => {
+      const d = formData($('#autoprod-form'));
+      const err = $('#autoprod-error');
+      err.textContent = '';
+      el.disabled = true;
+      try {
+        const r = await write('saveSettings', { autoProduct: !!d.autoProduct, autoProductId: d.autoProductId }, 'Automatic product emails saved');
+        if (r) toast(d.autoProduct ? 'Automatic product emails are on' : 'Automatic product emails are off');
       } catch (e) { err.textContent = e.message; }
       el.disabled = false;
     },
