@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.4.0';
+  const CLIENT_VERSION = '1.5.0';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -293,6 +293,7 @@
     S.autoProductToday = b.autoProductToday || 0;
     S.lastSync = b.lastSync || '';
     S.lastBackup = b.lastBackup || '';
+    S.inbox = b.inbox || {};
     S.lastRefresh = Date.now();
     S.loaded = true;
     $('#side-user').textContent = S.me;
@@ -992,6 +993,10 @@
               <dt>Signed in as</dt><dd>${esc(S.me || S.email)}</dd>
               <dt>Emails last checked</dt><dd>${esc(fmtDateTime(S.lastSync) || 'Not yet')}</dd>
               <dt>Last backup</dt><dd>${esc(fmtDateTime(S.lastBackup) || 'Not yet (runs nightly)')}</dd>
+              <dt>Command inbox</dt><dd>${S.inbox && S.inbox.url ? `<a href="${esc(S.inbox.url)}" target="_blank" rel="noopener">Open folder</a>` : 'Created on the next check (within 15 min)'}
+                · last checked ${esc(fmtDateTime(S.inbox && S.inbox.lastRun) || 'not yet')}
+                ${S.inbox && S.inbox.lastSummary ? `<div class="small muted" dir="auto">${esc(S.inbox.lastSummary)}</div>` : ''}
+                <div><button class="link-btn" data-act="process-inbox">Apply command files now</button></div></dd>
               <dt>Changes waiting</dt><dd>${S.outbox.length} ${S.outbox.length ? '<button class="link-btn" data-act="flush">Save now</button>' : ''}</dd>
               <dt>Website version</dt><dd>${esc(CLIENT_VERSION)}</dd>
               <dt>Backend version</dt><dd>${esc(S.serverVersion || '—')}</dd>
@@ -1511,6 +1516,14 @@
     'import-run': () => runImport(),
     'import-clear': () => { S.importRows = null; render(); },
     'flush': () => flushOutbox(),
+    'process-inbox': async el => {
+      el.disabled = true;
+      try {
+        const r = await write('processInbox', {}, 'Command files');
+        if (r) { const n = (r.inboxRun && r.inboxRun.files) || 0; toast(n ? `${plural(n, 'command file', 'command files')} applied. Results are in the Done folder.` : 'No new command files'); }
+      } catch (e) { toast(e.message, 'error'); }
+      el.disabled = false;
+    },
     'reload-all': async () => { try { await refreshAll(); toast('Data reloaded'); } catch (e) { toast(e.message, 'error'); } },
     'reload-company': () => { const r = route(); if (r.id) loadCompany(r.id); },
     'retry-start': () => startApp()
