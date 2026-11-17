@@ -2,10 +2,14 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.7.1';
+  const CLIENT_VERSION = '1.8.0';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
+  const LS_COUNTRY = 'clickcrm.country';
+  const US_TZ_NAMES = { 'America/New_York': 'Eastern', 'America/Detroit': 'Eastern', 'America/Indiana/Indianapolis': 'Eastern',
+    'America/Chicago': 'Central', 'America/Denver': 'Mountain', 'America/Boise': 'Mountain', 'America/Phoenix': 'Arizona',
+    'America/Los_Angeles': 'Pacific', 'America/Anchorage': 'Alaska', 'Pacific/Honolulu': 'Hawaii', 'America/Puerto_Rico': 'Atlantic' };
   const TZ = 'Asia/Jerusalem';
 
   const CONSENT = { NONE: 'Not contacted', SENT: 'Request sent', YES: 'Yes', NO: 'Said no', UNSUB: 'Unsubscribed' };
@@ -25,8 +29,10 @@
     versionWarned: false,
     lastRefresh: 0,
     filters: { q: '', status: '', segment: '', product: '', conf: '', email: '', archived: false, sort: 'name' },
-    importRows: null
+    importRows: null,
+    country: 'IL'
   };
+  try { if (localStorage.getItem(LS_COUNTRY) === 'US') S.country = 'US'; } catch (e) { /* ignore */ }
   const inflight = new Set();
   let gisReady = false;
 
@@ -66,7 +72,44 @@
   function stClass(st) {
     return { [CONSENT.NONE]: 'st-none', [CONSENT.SENT]: 'st-sent', [CONSENT.YES]: 'st-yes', [CONSENT.NO]: 'st-no', [CONSENT.UNSUB]: 'st-unsub' }[st] || 'st-none';
   }
-  function badge(st) { return `<span class="badge ${stClass(st)}">${esc(st)}</span>`; }
+  function badge(st, us) { return `<span class="badge ${stClass(st)}">${esc(stLabel(st, us))}</span>`; }
+  function badgeFor(c) { return badge(status(c), isUs(c)); }
+  // ---- countries ----
+  function countryOf(c) { return c && String(c.country || '').toUpperCase() === 'US' ? 'US' : 'IL'; }
+  function isUs(c) { return countryOf(c) === 'US'; }
+  function inCountry(c) { return countryOf(c) === S.country; }
+  /** The same statuses, named for what they mean in the US (no consent step there). */
+  function stLabel(st, us) {
+    if (!us) return st;
+    return { [CONSENT.SENT]: 'Emailed', [CONSENT.YES]: 'Interested' }[st] || st;
+  }
+  function usLocalTime(c) {
+    const tz = c.timezone || 'America/New_York';
+    try {
+      const t = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date());
+      return t + ' ' + (c.timezone ? (US_TZ_NAMES[tz] || tz) : 'Eastern (state unknown)');
+    } catch (e) { return ''; }
+  }
+  function usOpenNow(c) {
+    const at = (tz, from, to) => {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: 'numeric', hourCycle: 'h23' }).formatToParts(new Date());
+      const wd = (parts.find(p => p.type === 'weekday') || {}).value;
+      const hr = Number((parts.find(p => p.type === 'hour') || {}).value);
+      return ['Mon', 'Tue', 'Wed', 'Thu'].indexOf(wd) >= 0 && hr >= from && hr < to;
+    };
+    return c.timezone ? at(c.timezone, 9, 16) : (at('America/New_York', 12, 16) && at('America/Los_Angeles', 9, 13));
+  }
+  function usFooterText() {
+    const s = S.settings;
+    return ['--', s.senderNameEn || '(your name in English)', s.senderAddressEn || '(your postal address in English)',
+      [S.me, s.senderPhone].filter(Boolean).join(' | '), '',
+      'This is a one-time promotional email about a free Revit add-in.',
+      'If you\'d rather not hear from me, reply "unsubscribe" and I won\'t write again.'].join('\n');
+  }
+  function syncCountryButtons() {
+    $$('[data-act="set-country"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.country === S.country ? 'true' : 'false'));
+    document.body.classList.toggle('country-us', S.country === 'US');
+  }
   function confHtml(v) { return v ? `<span class="conf ${esc(v)}"><i></i>${esc(v)}</span>` : '<span class="conf"><i></i>Unknown</span>'; }
   function isArchived(c) { return c.archived === 'TRUE'; }
   function companyById(id) { return S.companies.find(c => c.id === id) || (S.bundle && S.bundle.company.id === id ? S.bundle.company : null); }
@@ -74,8 +117,10 @@
   function activeProducts() { return S.products.filter(p => p.active === 'TRUE'); }
   function blocked(c) { const st = status(c); return st === CONSENT.NO || st === CONSENT.UNSUB; }
   function ctxFor(c, p) {
+    const us = c && isUs(c);
     return {
-      company: c ? (c.nameHe || c.nameEn || '') : '', sender: S.settings.senderName || '', senderEmail: S.me || '',
+      company: c ? (us ? (c.nameEn || c.nameHe || '') : (c.nameHe || c.nameEn || '')) : '',
+      sender: (us ? S.settings.senderNameEn : S.settings.senderName) || S.settings.senderName || '', senderEmail: S.me || '',
       product: p ? p.name : '', link: p ? p.website : '', store: p ? p.storeLink : ''
     };
   }
@@ -291,6 +336,7 @@
     S.autoToday = b.autoToday || 0;
     S.bouncesToday = b.bouncesToday || 0;
     S.autoProductToday = b.autoProductToday || 0;
+    S.usToday = b.usToday || 0;
     S.lastSync = b.lastSync || '';
     S.lastBackup = b.lastBackup || '';
     S.inbox = b.inbox || {};
@@ -388,6 +434,7 @@
       if (el) { el.focus(); try { el.setSelectionRange(keep.start, keep.end); } catch (e) { /* not a text field */ } }
     }
     updateSyncPill();
+    syncCountryButtons();
     applyTranslation();
   }
 
@@ -441,11 +488,15 @@
     const today = todayYmd();
     const soonEnd = addDaysYmd(today, 7);
     const limit = Number(S.settings.dailyLimit || 20);
-    const unread = S.unread.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
-    const todo = S.tasks.filter(t => !t.dueDate || t.dueDate <= today).sort(byDue);
-    const soon = S.tasks.filter(t => t.dueDate && t.dueDate > today && t.dueDate <= soonEnd).sort(byDue);
-    const live = S.companies.filter(c => !isArchived(c));
-    const readyAll = live.filter(c => status(c) === CONSENT.NONE && c.email);
+    const us = S.country === 'US';
+    const here = a => { const c = companyById(a.companyId); return c ? inCountry(c) : S.country === 'IL'; };
+    const unread = S.unread.filter(here).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const tasks = S.tasks.filter(t => !t.companyId || here(t));
+    const todo = tasks.filter(t => !t.dueDate || t.dueDate <= today).sort(byDue);
+    const soon = tasks.filter(t => t.dueDate && t.dueDate > today && t.dueDate <= soonEnd).sort(byDue);
+    const live = S.companies.filter(c => !isArchived(c) && inCountry(c));
+    const withPerson = new Set(S.people.filter(p => p.email && p.deleted !== 'TRUE').map(p => p.companyId));
+    const readyAll = live.filter(c => status(c) === CONSENT.NONE && (c.email || (us && withPerson.has(c.id))));
     const ready = readyAll.slice().sort(byConfidence).slice(0, 8);
     const counts = {};
     CONSENT_LIST.forEach(s => { counts[s] = 0; });
@@ -454,7 +505,7 @@
 
     return `
       <div class="page-head">
-        <div><h1>Today</h1><p>${esc(dFmt.format(new Date()))}</p></div>
+        <div><h1>Today <span class="country-tag">${us ? 'USA' : 'Israel'}</span></h1><p>${esc(dFmt.format(new Date()))}</p></div>
         <div class="actions"><button class="btn" data-act="new-task">Add to-do</button><button class="btn" data-act="new-company">Add company</button></div>
       </div>
       <div class="today-grid">
@@ -464,21 +515,21 @@
             ${unread.length ? unread.map(replyCard).join('') : '<p class="empty">No new replies. Use “Check replies” at the top to look again.</p>'}
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Ready to contact<span class="count">${readyAll.length || ''}</span></h2>
+            <div class="panel-head"><h2>${us ? 'Ready to email' : 'Ready to contact'}<span class="count">${readyAll.length || ''}</span></h2>
               <div class="actions"><a href="#/companies" data-act="filter-status" data-status="${esc(CONSENT.NONE)}" class="small">See all</a>
-              ${readyAll.length ? '<button class="btn small primary" data-act="batch">Send batch now</button>' : ''}</div></div>
-            <div class="meter"><span>Sent today: ${S.sentToday} of ${limit}</span><span class="meter-bar"><i style="width:${pct}%"></i></span></div>
-            ${autoLine()}
-            ${autoProductLine()}
+              ${readyAll.length && !us ? '<button class="btn small primary" data-act="batch">Send batch now</button>' : ''}</div></div>
+            <div class="meter"><span>Sent today (Israel and USA together): ${S.sentToday} of ${limit}</span><span class="meter-bar"><i style="width:${pct}%"></i></span></div>
+            ${us ? autoUsLine() : autoLine() + autoProductLine()}
             ${ready.length ? ready.map(c => `
               <div class="ready-row">
                 <div class="grow"><a href="#/company/${encodeURIComponent(c.id)}" dir="auto">${esc(primaryName(c))}</a>
-                  <div class="small muted">${esc([c.city, c.segment].filter(Boolean).join(', '))}</div></div>
+                  <div class="small muted">${esc((us ? [c.city, c.state, usLocalTime(c)] : [c.city, c.segment]).filter(Boolean).join(', '))}</div></div>
                 ${confHtml(c.revitConfidence)}
-                <button class="btn small" data-act="compose-consent" data-id="${esc(c.id)}">Send request</button>
+                ${us ? `<button class="btn small" data-act="compose-us" data-id="${esc(c.id)}">Send email</button>`
+                  : `<button class="btn small" data-act="compose-consent" data-id="${esc(c.id)}">Send request</button>`}
               </div>`).join('') : (live.length
                 ? '<p class="empty">Everyone with an email address has been contacted. Import more companies to continue.</p>'
-                : '<p class="empty">No companies yet. <a href="#/import">Import your list</a> to start.</p>')}
+                : `<p class="empty">No ${us ? 'US ' : ''}companies yet. <a href="#/import">Import your list</a> to start.</p>`)}
           </section>
         </div>
         <div class="stack">
@@ -490,7 +541,7 @@
           <section class="panel">
             <div class="panel-head"><h2>Your list</h2><span class="small muted">${plural(live.length, 'company', 'companies')}</span></div>
             <div class="status-strip">
-              ${CONSENT_LIST.map(s => `<button data-act="filter-status" data-status="${esc(s)}"><b>${counts[s] || 0}</b><span>${esc(s)}</span></button>`).join('')}
+              ${CONSENT_LIST.map(s => `<button data-act="filter-status" data-status="${esc(s)}"><b>${counts[s] || 0}</b><span>${esc(stLabel(s, us))}</span></button>`).join('')}
             </div>
           </section>
         </div>
@@ -511,7 +562,7 @@
   function batchCandidates() {
     const conf = S.settings.autoConfidence || 'High,Medium';
     const allowed = conf === 'High' ? ['High'] : conf === 'All' ? null : ['High', 'Medium'];
-    return S.companies.filter(c => !isArchived(c) && status(c) === CONSENT.NONE && c.email &&
+    return S.companies.filter(c => !isArchived(c) && !isUs(c) && status(c) === CONSENT.NONE && c.email &&
       (!allowed || allowed.indexOf(c.revitConfidence) >= 0));
   }
 
@@ -520,7 +571,7 @@
     const unreadCo = new Set(S.unread.filter(a => a.type === 'email_in').map(a => a.companyId));
     const ready = [], manual = [];
     S.companies.forEach(c => {
-      if (isArchived(c) || status(c) !== CONSENT.YES) return;
+      if (isArchived(c) || isUs(c) || status(c) !== CONSENT.YES) return;
       if ((c.productStatus || {})[pid] || unreadCo.has(c.id)) return;
       (withPeople.has(c.id) ? manual : ready).push(c);
     });
@@ -535,6 +586,14 @@
     }
     return `<p class="small muted">Automatic sending is off. <a href="#/settings">Turn it on in Settings</a>.</p>`;
   }
+  function autoUsLine() {
+    const s = S.settings;
+    if (s.usPausedReason && s.usAuto !== 'TRUE') return `<p class="notice danger small">${esc(s.usPausedReason)} <a href="#/settings">Settings</a></p>`;
+    if (s.usAuto === 'TRUE') {
+      return `<p class="notice calm small">Automatic US emails are on: ${S.usToday || 0} of ${esc(s.usPerDay || 15)} sent today. Each company gets one email, Monday–Thursday 9:00–16:00 in its own time zone (on Israel time: about 16:00 until 02:00), at least 30 minutes apart. Never on Friday or Shabbat. <a href="#/settings">Change</a></p>`;
+    }
+    return `<p class="small muted">Automatic US emails are off. <a href="#/settings">Turn them on in Settings</a>.</p>`;
+  }
   function autoProductLine() {
     const s = S.settings;
     if (s.autoProduct !== 'TRUE') return '';
@@ -548,7 +607,7 @@
     return `
       <article class="reply ${a.kind === 'bounce' ? 'is-bounce' : ''}">
         <div class="reply-head"><a class="reply-co" href="#/company/${encodeURIComponent(c.id)}" dir="auto">${esc(primaryName(c))}</a>
-          ${badge(status(c))}<time>${esc(fmtDateTime(a.date))}</time></div>
+          ${badgeFor(c)}<time>${esc(fmtDateTime(a.date))}</time></div>
         ${a.kind === 'bounce' ? '<div class="small muted">Email bounced</div>' : ''}
         ${sentSummary(a.sent, false, c)}
         <div class="reply-mail">${mailView(a)}</div>
@@ -567,6 +626,11 @@
     const hint = { yes: 'This looks like a yes.', no: 'This looks like a no.', unsub: 'This looks like a removal request.' }[sug];
     const b = (decision, text) => `<button class="btn small ${sug === decision ? 'suggested' : ''}" data-act="review" data-id="${esc(a.id)}" data-decision="${decision}">${text}</button>`;
     const reply = `<button class="btn small ghost" data-act="compose-reply" data-thread="${esc(a.threadId)}" data-company="${esc(c.id)}">Reply</button>`;
+    if (status(c) === CONSENT.SENT && isUs(c)) {
+      const h = { yes: 'This looks interested.', no: 'This looks like a no.', unsub: 'This looks like an unsubscribe request.' }[sug];
+      return `${h ? `<p class="reply-hint">${h} Please confirm.</p>` : ''}
+        <div class="actions">${b('yes', 'Interested')}${b('no', 'Not interested')}${b('unsub', 'Unsubscribe them')}${b('read', 'Just mark as read')}${reply}</div>`;
+    }
     if (status(c) === CONSENT.SENT) {
       return `${hint ? `<p class="reply-hint">${hint} Please confirm.</p>` : ''}
         <div class="actions">${b('yes', 'They said yes')}${b('no', 'They said no')}${b('unsub', 'Remove them')}${b('read', 'Just mark as read')}${reply}</div>`;
@@ -590,7 +654,7 @@
     const f = S.filters;
     const q = f.q.trim().toLowerCase();
     const qDigits = phoneDigits(q);
-    let list = S.companies.filter(c => (f.archived ? isArchived(c) : !isArchived(c)));
+    let list = S.companies.filter(c => inCountry(c) && (f.archived ? isArchived(c) : !isArchived(c)));
     if (f.status) list = list.filter(c => status(c) === f.status);
     if (f.segment) list = list.filter(c => (c.segment || '') === f.segment);
     if (f.conf) list = list.filter(c => (c.revitConfidence || '') === (f.conf === 'none' ? '' : f.conf));
@@ -614,16 +678,17 @@
   }
   function viewCompanies() {
     const f = S.filters;
-    const segments = Array.from(new Set(S.companies.map(c => c.segment).filter(Boolean))).sort();
+    const segments = Array.from(new Set(S.companies.filter(inCountry).map(c => c.segment).filter(Boolean))).sort();
+    const us = S.country === 'US';
     const opt = (v, label, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(label)}</option>`;
     return `
       <div class="page-head">
-        <div><h1>Companies</h1></div>
+        <div><h1>Companies <span class="country-tag">${us ? 'USA' : 'Israel'}</span></h1></div>
         <div class="actions"><a class="btn" href="#/import">Import list</a><button class="btn primary" data-act="new-company">Add company</button></div>
       </div>
       <div class="filters">
         <input type="search" id="co-q" data-filter="q" value="${esc(f.q)}" placeholder="Search name, email, city or phone" dir="auto" aria-label="Search companies">
-        <select data-filter="status" aria-label="Consent status">${opt('', 'Any status', f.status)}${CONSENT_LIST.map(s => opt(s, s, f.status)).join('')}</select>
+        <select data-filter="status" aria-label="Status">${opt('', 'Any status', f.status)}${CONSENT_LIST.map(s => opt(s, stLabel(s, us), f.status)).join('')}</select>
         <select data-filter="segment" aria-label="Segment">${opt('', 'Any segment', f.segment)}${segments.map(s => opt(s, s, f.segment)).join('')}</select>
         <select data-filter="conf" aria-label="Revit confidence">${opt('', 'Any Revit confidence', f.conf)}${['High', 'Medium', 'Low'].map(s => opt(s, s, f.conf)).join('')}${opt('none', 'Unknown', f.conf)}</select>
         <select data-filter="product" aria-label="Product">${opt('', 'Any product', f.product)}${S.products.map(p => opt(p.id, 'Has ' + p.name + ' status', f.product)).join('')}</select>
@@ -635,8 +700,8 @@
   }
   function companyListHtml() {
     const list = filteredCompanies();
-    if (!S.companies.length) {
-      return `<div class="panel"><p>No companies yet. Import the list from your research, or add one by hand.</p>
+    if (!S.companies.some(inCountry)) {
+      return `<div class="panel"><p>No ${S.country === 'US' ? 'US ' : ''}companies yet. Import the list from your research, or add one by hand.</p>
         <div class="actions"><a class="btn primary" href="#/import">Import list</a><button class="btn" data-act="new-company">Add company</button></div></div>`;
     }
     if (!list.length) return '<div class="panel"><p class="empty">No companies match these filters.</p></div>';
@@ -648,9 +713,9 @@
     const tags = Object.keys(ps).map(pid => { const p = productById(pid); return p && ps[pid] ? `<span class="tag">${esc(p.name)}: ${esc(ps[pid])}</span>` : ''; }).join('');
     return `<a class="co-row" href="#/company/${encodeURIComponent(c.id)}">
       <span><span class="co-name" dir="auto">${esc(primaryName(c))}</span>${secondaryName(c) ? `<span class="co-sub">${esc(secondaryName(c))}</span>` : ''}</span>
-      <span class="co-meta" dir="auto">${esc(c.city || '')}</span>
+      <span class="co-meta" dir="auto">${esc([c.city, isUs(c) ? c.state : ''].filter(Boolean).join(', '))}</span>
       <span class="co-conf">${confHtml(c.revitConfidence)}</span>
-      <span class="co-status">${badge(status(c))}${tags}</span>
+      <span class="co-status">${badgeFor(c)}${tags}</span>
     </a>`;
   }
 
@@ -662,10 +727,13 @@
     const st = status(c);
     const pending = S.outbox.filter(i => i.payload && i.payload.companyId === c.id && (i.action === 'addNote' || i.action === 'logCall'));
     const openTasks = b.tasks.filter(t => t.done !== 'TRUE').sort(byDue);
-    const meta = [c.city, c.segment, c.employees ? c.employees + ' employees' : ''].filter(Boolean);
+    const us = isUs(c);
+    const meta = [us ? 'USA' : '', c.city, us ? c.state : '', c.segment, c.employees ? c.employees + ' employees' : ''].filter(Boolean);
+    const hasTo = c.email || b.people.some(p => p.email);
 
     let primary = '';
-    if (!isArchived(c) && st === CONSENT.NONE && c.email) primary = `<button class="btn primary" data-act="compose-consent" data-id="${esc(c.id)}">Send consent request</button>`;
+    if (!isArchived(c) && st === CONSENT.NONE && us && hasTo) primary = `<button class="btn primary" data-act="compose-us" data-id="${esc(c.id)}">Send email</button>`;
+    else if (!isArchived(c) && st === CONSENT.NONE && c.email) primary = `<button class="btn primary" data-act="compose-consent" data-id="${esc(c.id)}">Send consent request</button>`;
     if (!isArchived(c) && st === CONSENT.YES) primary = `<button class="btn primary" data-act="compose-product" data-id="${esc(c.id)}">Send product email</button>`;
 
     return `
@@ -674,7 +742,7 @@
       <div class="co-head">
         <h1 dir="auto">${esc(primaryName(c))}</h1>
         ${secondaryName(c) ? `<div class="alt-name">${esc(secondaryName(c))}</div>` : ''}
-        <div class="meta-line">${badge(st)}${confHtml(c.revitConfidence)}${meta.map(m => `<span dir="auto">${esc(m)}</span>`).join('')}</div>
+        <div class="meta-line">${badgeFor(c)}${confHtml(c.revitConfidence)}${meta.map(m => `<span dir="auto">${esc(m)}</span>`).join('')}</div>
         <div class="actions">
           ${primary}
           <button class="btn" data-act="log-call" data-id="${esc(c.id)}">Log call</button>
@@ -686,7 +754,7 @@
       </div>
       <div class="co-layout">
         <div class="stack">
-          ${consentPanel(c)}
+          ${us ? usPanel(c) : consentPanel(c)}
           ${productsPanel(c)}
           <section class="panel">
             <div class="panel-head"><h2>To do</h2><button class="link-btn" data-act="new-task" data-company="${esc(c.id)}">Add</button></div>
@@ -719,6 +787,24 @@
           </ul>
         </section>
       </div>`;
+  }
+
+  function usPanel(c) {
+    const st = status(c);
+    let text;
+    if (st === CONSENT.NONE) text = usOpenNow(c)
+      ? 'Not emailed yet. It is working hours there now, so the automatic queue (if on) can send it today.'
+      : 'Not emailed yet. The automatic queue sends it Monday–Thursday 9:00–16:00 their time.';
+    if (st === CONSENT.SENT) text = 'They got the one email. The CRM won’t send another. If they reply, it shows in Today.';
+    if (st === CONSENT.YES) text = 'They are interested. You can send them product emails.';
+    if (st === CONSENT.NO) text = 'They said no. The CRM blocks all emails to this company.';
+    if (st === CONSENT.UNSUB) text = 'They unsubscribed. The CRM blocks all emails to this company.';
+    return `<section class="panel">
+      <div class="panel-head"><h2>Outreach (USA)</h2><button class="link-btn" data-act="change-consent" data-id="${esc(c.id)}">Change</button></div>
+      <p class="small" style="margin:0 0 6px">${badgeFor(c)} ${c.consentRequestDate ? 'Emailed ' + esc(fmtDateTime(c.consentRequestDate)) : ''}</p>
+      <p class="small" style="margin:0">${esc(text)}</p>
+      <p class="small muted" style="margin:6px 0 0">Their time now: ${esc(usLocalTime(c))}${c.state ? '' : ' · add the state (Edit) for the right time zone'}</p>
+    </section>`;
   }
 
   function consentPanel(c) {
@@ -775,7 +861,9 @@
         ${row('Phone', c.phone ? `<a href="${esc(telHref(c.phone))}">${esc(c.phone)}</a>` : '')}
         ${row('Website', link(c.website))}
         ${row('LinkedIn', link(c.linkedin, 'Profile'))}
+        ${row('Country', isUs(c) ? 'USA' : 'Israel')}
         ${row('City', esc(c.city))}
+        ${row('State', isUs(c) ? esc(c.state) : '')}
         ${row('Segment', esc(c.segment))}
         ${row('Revit evidence', esc(c.revitEvidence))}
         ${row('Evidence page', link(c.evidenceUrl, 'Open'))}
@@ -956,7 +1044,7 @@
   /** What we have sent this company: kind, date, to (and Cc). Newest first. */
   /** For a "Yes" company that hasn't had the automatic product yet: when will it go, to whom, or what holds it back. */
   function productNextLine(c, out) {
-    if (!c || !c.id || status(c) !== CONSENT.YES || isArchived(c)) return '';
+    if (!c || !c.id || isUs(c) || status(c) !== CONSENT.YES || isArchived(c)) return '';
     const s = S.settings || {};
     const pid = s.autoProductId || ((activeProducts()[0] || {}).id) || '';
     const prod = productById(pid);
@@ -983,6 +1071,7 @@
       .slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
     const next = productNextLine(c, out);
     if (!out.length) return `<div class="sent-sum empty-sum">We haven’t emailed them yet.${next}</div>`;
+    const usCo = c && isUs(c);
     const label = a => {
       if (a.kind === 'consent') return 'Consent request';
       if (a.kind === 'product') { const p = productById(a.productId); return (p ? p.name : 'Product') + ' email'; }
@@ -992,7 +1081,7 @@
     };
     const prodSent = out.some(a => a.kind === 'product');
     return `<div class="sent-sum ${open ? 'open' : ''}">
-      <div class="sent-title">What we sent them${prodSent ? '' : ' <span class="badge st-sent">No product email yet</span>'}</div>
+      <div class="sent-title">What we sent them${prodSent || usCo ? '' : ' <span class="badge st-sent">No product email yet</span>'}</div>
       <ul>${out.map(a => `<li><span class="sent-kind ${a.kind === 'product' ? 'is-prod' : ''}">${esc(label(a))}</span>
         <time>${esc(fmtDateTime(a.date))}</time>
         <span class="sent-to" dir="ltr">→ ${esc(a.toAddr || '')}${a.ccAddr ? ` · Cc ${esc(a.ccAddr)}` : ''}</span></li>`).join('')}</ul>
@@ -1071,7 +1160,7 @@
         <div class="panel-head"><h2>Check before importing</h2><span class="small muted">${plural(add, 'new company', 'new companies')}, ${rows.length - add} skipped</span></div>
         <div class="table-wrap"><table class="preview"><thead><tr><th>Result</th><th>Company</th><th>Email</th><th>City</th><th>Revit</th><th>Website</th></tr></thead>
         <tbody>${rows.slice(0, 300).map(r => `<tr class="${r._status === 'New' ? '' : 'skip'}"><td>${esc(r._status)}</td>
-          <td dir="auto">${esc(r.nameHe || r.nameEn)}</td><td>${esc(r.email || '—')}</td><td dir="auto">${esc(r.city)}</td>
+          <td dir="auto">${esc(r.nameHe || r.nameEn)}${String(r.country).toUpperCase().startsWith('US') ? ' <span class="tag">USA</span>' : ''}</td><td>${esc(r.email || '—')}${r.contactEmail ? `<div class="small muted">${esc((r.contactName ? r.contactName + ': ' : '') + r.contactEmail)}</div>` : ''}</td><td dir="auto">${esc([r.city, r.state].filter(Boolean).join(', '))}</td>
           <td>${esc(r.revitConfidence)}</td><td>${esc(r.website)}</td></tr>`).join('')}</tbody></table></div>
         ${rows.length > 300 ? `<p class="hint">Showing the first 300 rows.</p>` : ''}
         <div class="actions" style="margin-top:12px"><button class="btn primary" data-act="import-run" ${add ? '' : 'disabled'}>Import ${plural(add, 'company', 'companies')}</button>
@@ -1080,7 +1169,8 @@
       </section>`;
     }
     return `
-      <div class="page-head"><div><h1>Import list</h1><p>Load the CSV from your research. Companies already in the CRM are skipped automatically.</p></div></div>
+      <div class="page-head"><div><h1>Import list <span class="country-tag">${S.country === 'US' ? 'USA' : 'Israel'}</span></h1><p>Load the CSV from your research. Companies already in the CRM are skipped automatically.</p></div></div>
+      <div class="notice calm small" style="margin-bottom:12px">These companies will be added to <b>${S.country === 'US' ? 'USA' : 'Israel'}</b> (unless the file has a Country column). To import into the other country, switch at the top first.</div>
       <div class="stack">
         <section class="panel">
           <div class="form-grid">
@@ -1088,7 +1178,7 @@
             <label class="field full"><span>Or paste the CSV text</span><textarea id="import-text" class="tall" dir="ltr" placeholder="&quot;Company Name (English)&quot;,&quot;Company Name (Hebrew)&quot;,..."></textarea></label>
           </div>
           <div class="actions" style="margin-top:10px"><button class="btn" data-act="import-parse">Check pasted text</button></div>
-          <p class="hint" style="margin-top:8px">Recognized columns: company name (English/Hebrew), segment, city, website, general email, email source URL, contact page URL, phone, LinkedIn, Revit evidence, evidence URL, Revit confidence, employees, notes. “NOT FOUND” values are left empty.</p>
+          <p class="hint" style="margin-top:8px">Recognized columns: company name (English/Hebrew), segment, city, state, country, website, general email, email source URL, contact page URL, phone, LinkedIn, Revit evidence, evidence URL, Revit confidence, employees, notes, and for a named person (e.g. the BIM manager): contact name, contact email, contact role. A named contact gets the email instead of the general address. “NOT FOUND” values are left empty.</p>
         </section>
         ${preview}
       </div>`;
@@ -1115,6 +1205,11 @@
     return rows.filter(r => r.some(v => String(v).trim() !== ''));
   }
   const IMPORT_RULES = [
+    ['contactEmail', h => /e-?mail/.test(h) && /contact|named|person|bim/.test(h) && !/source|general/.test(h)],
+    ['contactName', h => /(contact|named|person|bim)/.test(h) && /name|manager|lead/.test(h) && !/e-?mail|role|title|page|url/.test(h)],
+    ['contactRole', h => /(contact|person).*(role|title)|^(role|title|job title)$/.test(h)],
+    ['country', h => /^country$/.test(h)],
+    ['state', h => /^(state|st|state\/province|us state)$/.test(h)],
     ['nameHe', h => /hebrew|עברית/.test(h)],
     ['nameEn', h => /(company|name)/.test(h) && !/contact|named/.test(h)],
     ['contactUrl', h => /contact (page|url|form)/.test(h)],
@@ -1155,9 +1250,13 @@
     return rows.slice(1).map(r => {
       const o = {};
       fields.forEach((f, i) => { if (f) o[f] = cleanVal(r[i]); });
+      if (!o.country) o.country = S.country;
       o.email = String(o.email || '').toLowerCase();
+      o.contactEmail = String(o.contactEmail || '').toLowerCase();
+      if (o.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(o.contactEmail)) o.contactEmail = '';
       if (o.email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(o.email)) o.email = '';
       const d = domainOf(o.website, /@(gmail|walla|yahoo|hotmail|outlook)\./.test(o.email) ? '' : o.email);
+      if (!o.email && o.contactEmail) o._contactOnly = true;
       if (!o.nameEn && !o.nameHe) o._status = 'No name';
       else if ((d && domains.has(d)) || (o.email && emails.has(o.email))) o._status = 'Already in CRM';
       else { o._status = 'New'; if (d) domains.add(d); if (o.email) emails.add(o.email); }
@@ -1165,7 +1264,7 @@
     });
   }
   async function runImport() {
-    const rows = (S.importRows || []).filter(r => r._status === 'New').map(r => { const o = Object.assign({}, r); delete o._status; return o; });
+    const rows = (S.importRows || []).filter(r => r._status === 'New').map(r => { const o = Object.assign({}, r); delete o._status; delete o._contactOnly; return o; });
     const btn = $('[data-act="import-run"]');
     const prog = $('#import-progress');
     if (btn) btn.disabled = true;
@@ -1241,6 +1340,25 @@
               <p class="form-error" id="autoprod-error"></p>
               <div class="actions" style="margin-top:10px"><button class="btn primary" data-act="save-autoprod">Save automatic product emails</button></div>`;
             })()}
+          </section>
+          <section class="panel" id="us-form">
+            <div class="panel-head"><h2>USA emails</h2></div>
+            ${s.usPausedReason && s.usAuto !== 'TRUE' ? `<p class="notice danger small">${esc(s.usPausedReason)}</p>` : ''}
+            <div class="form-grid">
+              <label class="field full"><span>Your name in English (shown as the sender)</span><input name="senderNameEn" dir="ltr" value="${esc(s.senderNameEn)}"></label>
+              <label class="field full"><span>Postal address in English (required by US law)</span><input name="senderAddressEn" dir="ltr" value="${esc(s.senderAddressEn)}" placeholder="Street 1, Safed, Israel"></label>
+            </div>
+            <label class="check" style="margin-top:8px"><input type="checkbox" name="usAuto" ${s.usAuto === 'TRUE' ? 'checked' : ''}><span>Send the English email to US companies automatically</span></label>
+            <div class="form-grid" style="margin-top:8px">
+              <label class="field"><span>US emails per day</span><input name="usPerDay" type="number" min="1" max="40" value="${esc(s.usPerDay || 15)}"></label>
+              <label class="field"><span>Product</span><select name="usProductId">
+                ${activeProducts().map(p => `<option value="${esc(p.id)}" ${p.id === (s.usProductId || 'p_clickto3d') ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+            </div>
+            <p class="hint" style="margin-top:8px">Each US company gets one English email (no consent request: US law allows a business email with your address and an unsubscribe line). It goes Monday–Thursday 9:00–16:00 in the company’s own time zone (from its state), at least 30 minutes apart, best Revit confidence first. Never on Friday or Shabbat. It goes to the named contact if the list has one, else the general address. US emails also count toward the daily email limit. Start low (about 15): many cold emails from a free Gmail address can get it flagged.</p>
+            <p class="small" style="margin-top:6px">Sent today: ${S.usToday || 0}.</p>
+            <pre class="footer-preview" dir="ltr" style="margin-top:8px">${esc(usFooterText())}</pre>
+            <p class="form-error" id="us-error"></p>
+            <div class="actions" style="margin-top:10px"><button class="btn primary" data-act="save-us">Save USA emails</button></div>
           </section>
           <section class="panel">
             <div class="panel-head"><h2>Added to every product email</h2></div>
@@ -1333,6 +1451,9 @@
         ${field('General email', 'email', c.email, { dir: 'ltr', type: 'email' })}
         ${field('Phone', 'phone', c.phone, { dir: 'ltr', type: 'tel' })}
         ${field('Website', 'website', c.website, { dir: 'ltr' })}
+        <label class="field"><span>Country</span><select name="country">
+          ${[['IL', 'Israel'], ['US', 'USA']].map(([v, l]) => `<option value="${v}" ${v === (c.id ? countryOf(c) : S.country) ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        ${field('State (USA, e.g. NY)', 'state', c.state, { dir: 'ltr' })}
         ${field('City', 'city', c.city)}
         ${field('Segment', 'segment', c.segment)}
         <label class="field"><span>Revit confidence</span><select name="revitConfidence">
@@ -1438,7 +1559,7 @@
     const st = status(c);
     const m = openModal('Change consent status', `
       <p class="small">Use this when something happened outside the CRM, for example they agreed in an email the CRM didn’t catch, or a request was marked as sent but never left Gmail. A “Yes” needs written consent (an email), not a phone call.</p>
-      <label class="field"><span>New status</span><select name="status">${CONSENT_LIST.map(s => `<option ${s === st ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label>
+      <label class="field"><span>New status</span><select name="status">${CONSENT_LIST.map(s => `<option value="${esc(s)}" ${s === st ? 'selected' : ''}>${esc(stLabel(s, isUs(c)))}</option>`).join('')}</select></label>
       <label class="field"><span>What happened (required for “Yes” and for resetting a sent request)</span><textarea name="note" dir="auto" placeholder="Replied “כן” by email on 3 Nov from dana@firm.co.il"></textarea></label>
       ${st === CONSENT.NO || st === CONSENT.UNSUB ? `<div class="notice danger">This company asked not to be contacted.</div>
         <label class="check"><input type="checkbox" name="confirm"><span>I have their new, clear permission.</span></label>` : ''}`,
@@ -1463,6 +1584,9 @@
         ${field('Pitch subject (פרסומת: is added automatically)', 'pitchSubject', p.pitchSubject, { full: true })}
         <label class="field full"><span>Pitch email text</span><textarea name="pitchBody" class="tall" dir="rtl">${esc(p.pitchBody)}</textarea>
           <span class="hint">Placeholders: {company} {sender} {product} {link} {store}. Your legal footer is added automatically.</span></label>
+        ${field('English subject (USA)', 'pitchSubjectEn', p.pitchSubjectEn, { full: true, dir: 'ltr' })}
+        <label class="field full"><span>English email text (USA)</span><textarea name="pitchBodyEn" class="tall" dir="ltr">${esc(p.pitchBodyEn)}</textarea>
+          <span class="hint">Sent to US companies. Same placeholders. The English footer (your address and the unsubscribe line) is added automatically. No “פרסומת:”.</span></label>
         <label class="check full"><input type="checkbox" name="active" ${p.active === 'TRUE' ? 'checked' : ''}><span>Active (can be sent)</span></label>
       </div>`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-save>${p.id ? 'Save product' : 'Add product'}</button>`, { wide: true });
@@ -1593,13 +1717,63 @@
     sendFlow(m, { action: 'sendConsent', payload: () => ({ companyId: c.id }) }, 'Consent request sent');
   }
 
+  /** The one English email to a US company. */
+  function composeUs(id) {
+    const c = companyById(id);
+    if (!c) return;
+    const s = S.settings;
+    const prods = activeProducts().filter(p => p.pitchBodyEn);
+    if (!prods.length) { toast('Add the English email to a product first (Products page).', 'warn'); return; }
+    const p0 = prods.find(p => p.id === s.usProductId) || prods[0];
+    const missing = !s.senderNameEn || !s.senderAddressEn;
+    const people = S.people.filter(p => p.companyId === c.id && p.deleted !== 'TRUE');
+    const contacts = contactIds(people).map(pid => String((people.find(p => p.id === pid) || {}).email || '').toLowerCase()).filter(Boolean);
+    const recips = [];
+    contacts.concat([c.email], people.map(p => p.email)).forEach(e => { e = String(e || '').toLowerCase(); if (e && recips.indexOf(e) < 0) recips.push(e); });
+    const nameOf = e => { const p = people.find(x => String(x.email || '').toLowerCase() === e); return p ? p.name : ''; };
+    const open = usOpenNow(c);
+    const m = openModal('Send email (USA)', `
+      ${missing ? '<div class="notice danger">Add your name and postal address in English first (<a href="#/settings" data-act="close-modal">Settings → USA emails</a>). US law requires them.</div>' : ''}
+      <p class="small">Their time now: <b>${esc(usLocalTime(c))}</b>${open ? '' : ' · outside their working hours (the automatic queue would wait for Mon–Thu 9:00–16:00)'}</p>
+      <div class="form-grid">
+        <label class="field"><span>Product</span><select name="productId">${prods.map(p => `<option value="${esc(p.id)}" ${p.id === p0.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+        <label class="field"><span>To</span><select name="to" dir="ltr">${recips.map(e => `<option value="${esc(e)}">${esc(e)}${nameOf(e) ? ' – ' + esc(nameOf(e)) : ''}</option>`).join('')}</select></label>
+      </div>
+      <label class="field"><span>Subject</span><input name="subject" dir="ltr"></label>
+      <label class="field"><span>Email text</span><textarea name="body" class="tall" dir="ltr"></textarea></label>
+      <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="ltr">${esc(usFooterText())}</pre></div>
+      <p class="hint">Each US company gets this email once. After it is sent, the CRM won’t send another.</p>
+      <div class="send-status" aria-live="polite"></div>`,
+      `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-send ${missing || !recips.length ? 'disabled' : ''}>Send email</button>`, { wide: true });
+    const sel = $('[name=productId]', m);
+    const fillFor = pid => {
+      const p = productById(pid) || p0;
+      const ctx = ctxFor(c, p);
+      $('[name=subject]', m).value = fill(p.pitchSubjectEn, ctx);
+      $('[name=body]', m).value = fill(p.pitchBodyEn, ctx);
+    };
+    fillFor(p0.id);
+    sel.addEventListener('change', () => fillFor(sel.value));
+    sendFlow(m, {
+      action: 'sendUs',
+      payload: () => {
+        const d = formData(m);
+        const box = $('.send-status', m);
+        if (!d.subject || !d.body) { box.className = 'send-status error'; box.textContent = 'Write a subject and a text.'; return null; }
+        if (/\{store\}|\{link\}/.test(d.body)) { box.className = 'send-status error'; box.textContent = 'A link is missing. Add it to the product (Products page) or remove the placeholder.'; return null; }
+        return { companyId: c.id, productId: d.productId, to: d.to, subject: d.subject, body: d.body };
+      }
+    }, 'Email sent');
+  }
+
   function composeProduct(id) {
     const c = companyById(id);
     if (!c) return;
     const prods = activeProducts();
     if (!prods.length) { toast('Add an active product first.', 'warn'); return; }
     const s = S.settings;
-    const missing = !s.senderName || !s.senderAddress;
+    const us = isUs(c);
+    const missing = us ? (!s.senderNameEn || !s.senderAddressEn) : (!s.senderName || !s.senderAddress);
     const people = S.people.filter(p => p.companyId === c.id && p.deleted !== 'TRUE');
     const contacts = contactIds(people).map(id => String((people.find(p => p.id === id) || {}).email || '').toLowerCase()).filter(Boolean);
     const recips = [];
@@ -1616,15 +1790,23 @@
       ${recips.length > 1 ? `<fieldset class="cc-list"><legend>Cc (also gets it)</legend>
         ${recips.map(e => `<label class="check" data-cc="${esc(e)}"><input type="checkbox" name="cc" value="${esc(e)}" ${contacts.indexOf(e) > 0 ? 'checked' : ''}><span dir="ltr">${esc(e)}${nameOf(e) ? ' – <span dir="auto">' + esc(nameOf(e)) + '</span>' : ''}</span></label>`).join('')}
       </fieldset>` : ''}
-      <label class="field"><span>Subject</span><div class="subject-row" dir="rtl"><span class="prefix">פרסומת:</span><input name="subject" dir="auto"></div></label>
+      ${us ? `<label class="field"><span>Subject</span><input name="subject" dir="ltr"></label>
+      <label class="field"><span>Email text</span><textarea name="body" class="tall" dir="ltr"></textarea></label>
+      <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="ltr">${esc(usFooterText())}</pre></div>`
+      : `<label class="field"><span>Subject</span><div class="subject-row" dir="rtl"><span class="prefix">פרסומת:</span><input name="subject" dir="auto"></div></label>
       <label class="field"><span>Email text</span><textarea name="body" class="tall" dir="rtl"></textarea></label>
-      <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="rtl">${esc(footerText())}</pre></div>
+      <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="rtl">${esc(footerText())}</pre></div>`}
       <div class="send-status" aria-live="polite"></div>`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-send ${missing ? 'disabled' : ''}>Send email</button>`, { wide: true });
     const sel = $('[name=productId]', m);
     const fillFor = pid => {
       const p = productById(pid) || p0;
       const ctx = ctxFor(c, p);
+      if (us) {
+        $('[name=subject]', m).value = fill(p.pitchSubjectEn, ctx);
+        $('[name=body]', m).value = fill(p.pitchBodyEn, ctx);
+        return;
+      }
       $('[name=subject]', m).value = fill(p.pitchSubject, ctx).replace(/^\s*פרסומת\s*[:\-–]?\s*/, '');
       $('[name=body]', m).value = fill(p.pitchBody, ctx);
     };
@@ -1681,7 +1863,7 @@
     const hits = S.companies.filter(c => matchesQuery(c, q, digits)).slice(0, 12);
     box.hidden = false;
     box.innerHTML = hits.length ? hits.map(c => `<a href="#/company/${encodeURIComponent(c.id)}"><span dir="auto">${esc(primaryName(c))}</span>
-        <span class="sr-sub">${esc([c.city, c.phone, c.email].filter(Boolean).join(' · '))} ${isArchived(c) ? '(archived)' : ''}</span></a>`).join('')
+        <span class="sr-sub">${isUs(c) ? 'USA · ' : ''}${esc([c.city, c.phone, c.email].filter(Boolean).join(' · '))} ${isArchived(c) ? '(archived)' : ''}</span></a>`).join('')
       : `<div class="sr-empty">No company found. <button class="link-btn" data-act="new-company">Add company</button></div>`;
   }
   function closeSearch() {
@@ -1769,6 +1951,27 @@
       } catch (e) { toast(e.message, 'error'); $$('button', box).forEach(b => { b.disabled = false; }); }
     },
     'compose-consent': el => composeConsent(el.dataset.id),
+    'compose-us': el => composeUs(el.dataset.id),
+    'set-country': el => {
+      const want = el.dataset.country === 'US' ? 'US' : 'IL';
+      if (want === S.country) return;
+      S.country = want;
+      try { localStorage.setItem(LS_COUNTRY, want); } catch (e) { /* ignore */ }
+      Object.assign(S.filters, { status: '', segment: '' });
+      S.importRows = null;
+      if (route().name === 'company') go('#/companies'); else render();
+    },
+    'save-us': async el => {
+      const d = formData($('#us-form'));
+      const err = $('#us-error');
+      err.textContent = '';
+      el.disabled = true;
+      try {
+        const r = await write('saveSettings', { senderNameEn: d.senderNameEn, senderAddressEn: d.senderAddressEn, usAuto: !!d.usAuto, usPerDay: d.usPerDay, usProductId: d.usProductId }, 'USA emails saved');
+        if (r) toast(d.usAuto ? 'Automatic US emails are on' : 'USA settings saved');
+      } catch (e) { err.textContent = e.message; }
+      el.disabled = false;
+    },
     'batch': () => batchModal(),
     'compose-product': el => composeProduct(el.dataset.id),
     'compose-reply': el => composeReply(el.dataset.thread, el.dataset.company),
