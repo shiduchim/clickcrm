@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.9.1';
+  const CLIENT_VERSION = '1.9.2';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -567,13 +567,12 @@
   }
 
   function productQueue(pid) {
-    const withPeople = new Set(S.people.filter(p => p.email).map(p => p.companyId));
     const unreadCo = new Set(S.unread.filter(a => a.type === 'email_in').map(a => a.companyId));
     const ready = [], manual = [];
     S.companies.forEach(c => {
       if (isArchived(c) || isUs(c) || status(c) !== CONSENT.YES) return;
       if ((c.productStatus || {})[pid] || unreadCo.has(c.id)) return;
-      (withPeople.has(c.id) ? manual : ready).push(c);
+      ready.push(c); // the server sends to the chosen people ("Gets emails") or the company address
     });
     return { ready, manual };
   }
@@ -1367,7 +1366,7 @@
             <div class="actions" style="margin-top:6px"><button class="btn" data-act="send-us-test">Send test email</button></div>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Added to every product email</h2></div>
+            <div class="panel-head"><h2>Added to every Hebrew product email (Israel)</h2></div>
             <pre class="footer-preview" dir="rtl">${esc(footerText())}</pre>
             <p class="hint" style="margin-top:8px">The subject always starts with “פרסומת:”.</p>
           </section>
