@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.6.0';
+  const CLIENT_VERSION = '1.6.2';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -549,7 +549,7 @@
         <div class="reply-head"><a class="reply-co" href="#/company/${encodeURIComponent(c.id)}" dir="auto">${esc(primaryName(c))}</a>
           ${badge(status(c))}<time>${esc(fmtDateTime(a.date))}</time></div>
         <div class="reply-from" dir="auto">${esc(a.fromAddr)}</div>
-        <p class="reply-text" dir="auto">${esc(String(a.body || '').slice(0, 400))}${String(a.body || '').length > 400 ? '…' : ''}</p>
+        <p class="reply-text" dir="auto">${esc(String(a.body || '').slice(0, 2500))}${String(a.body || '').length > 2500 ? '…' : ''}</p>
         ${reviewButtons(a, c)}
       </article>`;
   }
@@ -795,8 +795,9 @@
       return `<li class="act act-in ${a.unread === 'TRUE' ? 'is-new' : ''}">
         <div class="act-head"><span class="act-kind">${a.kind === 'bounce' ? 'Email bounced' : 'Email received'}</span>${a.unread === 'TRUE' ? '<span class="new-dot">New</span>' : ''}${when}</div>
         <div class="act-line" dir="auto">From ${esc(a.fromAddr)}</div>
+        ${a.ccAddr ? `<div class="act-line" dir="auto">Cc ${esc(a.ccAddr)}</div>` : ''}
         <div class="act-subj" dir="auto">${esc(a.subject)}</div>
-        ${bodyBlock(a.body)}
+        ${bodyBlock(a.fullBody || a.body)}
         ${a.unread === 'TRUE' ? reviewButtons(a, c) : `<div class="act-actions"><button class="btn small" data-act="compose-reply" data-thread="${esc(a.threadId)}" data-company="${esc(c.id)}">Reply</button>${gmail}</div>`}
       </li>`;
     }
