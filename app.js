@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.7.0';
+  const CLIENT_VERSION = '1.7.1';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -550,8 +550,9 @@
         <div class="reply-head"><a class="reply-co" href="#/company/${encodeURIComponent(c.id)}" dir="auto">${esc(primaryName(c))}</a>
           ${badge(status(c))}<time>${esc(fmtDateTime(a.date))}</time></div>
         ${a.kind === 'bounce' ? '<div class="small muted">Email bounced</div>' : ''}
-        ${sentSummary(a.sent)}
+        ${sentSummary(a.sent, false, c)}
         <div class="reply-mail">${mailView(a)}</div>
+        ${peopleBox(a, c)}
         ${reviewButtons(a, c)}
       </article>`;
   }
@@ -709,7 +710,7 @@
           </div>
         </div>
         <section class="panel">
-          ${sentSummary(b.activities.filter(a => a.type === 'email_out'), true)}
+          ${sentSummary(b.activities.filter(a => a.type === 'email_out'), true, c)}
           <div class="panel-head"><h2>History</h2><span class="small muted">${plural(b.activities.length, 'entry', 'entries')}</span></div>
           <ul class="timeline">
             ${pending.map(i => `<li class="act pending"><div class="act-head"><span class="act-kind">${i.action === 'logCall' ? 'Call' : 'Note'}</span><time>Waiting to save</time></div>
@@ -901,11 +902,87 @@
       ${olderHtml}`;
   }
 
+  /** People named in an email (From, To, Cc, or an address written in the text) who aren't saved yet.
+   *  Header addresses count only from the company's own domain; addresses written in the text count from any domain. */
+  function peopleInMail(a, c) {
+    const me = String(S.me || '').toLowerCase();
+    const doms = [c.domain, String(c.email || '').split('@')[1]].filter(Boolean).map(d => String(d).toLowerCase().replace(/^www\./, ''));
+    const known = new Set(S.people.filter(p => p.companyId === c.id && p.deleted !== 'TRUE').map(p => String(p.email || '').toLowerCase()));
+    known.add(String(c.email || '').toLowerCase());
+    const found = new Map();
+    const take = (mail, name, fromText) => {
+      mail = String(mail || '').trim().toLowerCase().replace(/[.,;:)]+$/, '');
+      if (!/^[^\s@<>]+@[^\s@<>]+\.[a-z]{2,}$/.test(mail) || mail === me || known.has(mail) || found.has(mail)) return;
+      if (/^(mailer-daemon|postmaster|no-?reply|donotreply)@/.test(mail)) return;
+      const dom = mail.split('@')[1];
+      if (!fromText && !doms.some(d => dom === d || dom.endsWith('.' + d))) return;
+      found.set(mail, cleanName(name, mail));
+    };
+    const fromHead = v => (String(v || '').match(/[^,;<]*<[^>]*>|[^,;\s][^,;]*/g) || []).forEach(x => {
+      const m = x.match(/^\s*(.*?)\s*<([^>]*)>\s*$/);
+      take(m ? m[2] : x, m ? m[1] : '', false);
+    });
+    fromHead(a.fromAddr); fromHead(a.toAddr); fromHead(a.ccAddr);
+    splitThread(a.fullBody || a.body).forEach(m => {
+      fromHead(m.head.from); fromHead(m.head.to); fromHead(m.head.cc);
+      (m.body.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) || []).forEach(e => take(e, '', true));
+    });
+    return [...found].map(([email, name]) => ({ email, name }));
+  }
+  /** "Edna //LS - Arch" → "Edna"; "Ayala Teitcher // LS-Arch" → "Ayala Teitcher"; no name → from the address. */
+  function cleanName(name, mail) {
+    let n = String(name || '').replace(/^["'\s]+|["'\s]+$/g, '').split(/\s*(?:\/\/|\||\s-\s)\s*/)[0].trim();
+    n = n.replace(/\s+(architects?|arch|engineers?|engineering|ltd|inc|studio|office|אדריכלים|משרד)\.?$/i, '').trim();
+    const generic = /^(info|office|mail|admin|studio|contact|hello|sales|secretary|reception|משרד|מזכירות|office manager)$/i;
+    if (generic.test(n) && !generic.test(mail.split('@')[0])) n = '';
+    if (!n || n.indexOf('@') >= 0) {
+      const local = mail.split('@')[0];
+      n = /^(info|office|mail|admin|studio|contact|hello|sales|secretary)$/i.test(local) ? local : local.split(/[._-]/)[0];
+      n = n.charAt(0).toUpperCase() + n.slice(1);
+    }
+    return n;
+  }
+  function peopleBox(a, c) {
+    if (a.kind === 'bounce' || !c || !c.id) return '';
+    const list = peopleInMail(a, c);
+    if (!list.length) return '';
+    return `<div class="found-people"><div class="found-title">People in this email</div>
+      ${list.map(p => `<div class="found-row"><span class="addr"><span dir="auto">${esc(p.name)}</span> <span class="addr-mail" dir="ltr">${esc(p.email)}</span></span>
+        <span class="found-btns"><button class="btn small" data-act="add-found" data-company="${esc(c.id)}" data-email="${esc(p.email)}" data-name="${esc(p.name)}" data-date="${esc(a.date)}" data-pref="1">Add – gets emails</button>
+        <button class="btn small ghost" data-act="add-found" data-company="${esc(c.id)}" data-email="${esc(p.email)}" data-name="${esc(p.name)}" data-date="${esc(a.date)}">Add as contact only</button></span></div>`).join('')}
+    </div>`;
+  }
+
   /** What we have sent this company: kind, date, to (and Cc). Newest first. */
-  function sentSummary(list, open) {
+  /** For a "Yes" company that hasn't had the automatic product yet: when will it go, to whom, or what holds it back. */
+  function productNextLine(c, out) {
+    if (!c || !c.id || status(c) !== CONSENT.YES || isArchived(c)) return '';
+    const s = S.settings || {};
+    const pid = s.autoProductId || ((activeProducts()[0] || {}).id) || '';
+    const prod = productById(pid);
+    if (!prod) return '';
+    let ps = {};
+    try { ps = JSON.parse(c.productStatus || '{}') || {}; } catch (e) { /* ignore */ }
+    if (ps[pid] || out.some(a => a.kind === 'product' && a.productId === pid)) return '';
+    const people = S.people.filter(p => p.companyId === c.id && p.deleted !== 'TRUE');
+    const ids = contactIds(people);
+    const who = ids.length
+      ? ids.map((id, k) => { const p = people.find(x => x.id === id); return (k ? 'Cc ' : '') + (p.name || p.email); }).join(', ')
+      : (c.email || 'their address');
+    const unread = S.unread.filter(a => a.companyId === c.id && a.type === 'email_in').length;
+    const send = `<button class="btn small" data-act="compose-product" data-id="${esc(c.id)}">Send now</button>`;
+    let text;
+    if (unread) text = `${esc(prod.name)} is waiting: ${plural(unread, 'unread reply', 'unread replies')}. Mark ${unread > 1 ? 'them' : 'it'} as read and it goes automatically to ${esc(who)}.`;
+    else if (s.autoProduct === 'TRUE' && s.autoProductId === pid) text = `${esc(prod.name)} will go automatically to ${esc(who)} (Sun–Thu 08:00–17:00, one every 10 minutes).`;
+    else text = `${esc(prod.name)} not sent yet. Automatic product emails are off; it will go to ${esc(who)} when you send it.`;
+    return `<div class="sent-next ${unread ? 'is-held' : ''}" dir="auto"><span>${text}</span>${unread ? '' : send}</div>`;
+  }
+
+  function sentSummary(list, open, c) {
     const out = (list || []).filter(a => a.type === undefined || a.type === 'email_out')
       .slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
-    if (!out.length) return '<p class="sent-sum empty-sum">We haven’t emailed them yet.</p>';
+    const next = productNextLine(c, out);
+    if (!out.length) return `<div class="sent-sum empty-sum">We haven’t emailed them yet.${next}</div>`;
     const label = a => {
       if (a.kind === 'consent') return 'Consent request';
       if (a.kind === 'product') { const p = productById(a.productId); return (p ? p.name : 'Product') + ' email'; }
@@ -919,6 +996,7 @@
       <ul>${out.map(a => `<li><span class="sent-kind ${a.kind === 'product' ? 'is-prod' : ''}">${esc(label(a))}</span>
         <time>${esc(fmtDateTime(a.date))}</time>
         <span class="sent-to" dir="ltr">→ ${esc(a.toAddr || '')}${a.ccAddr ? ` · Cc ${esc(a.ccAddr)}` : ''}</span></li>`).join('')}</ul>
+      ${next}
     </div>`;
   }
 
@@ -936,6 +1014,7 @@
       return `<li class="act act-in ${a.unread === 'TRUE' ? 'is-new' : ''}">
         <div class="act-head"><span class="act-kind">${a.kind === 'bounce' ? 'Email bounced' : 'Email received'}</span>${a.unread === 'TRUE' ? '<span class="new-dot">New</span>' : ''}${when}</div>
         ${mailView(a)}
+        ${peopleBox(a, c)}
         ${a.unread === 'TRUE' ? reviewButtons(a, c) : `<div class="act-actions"><button class="btn small" data-act="compose-reply" data-thread="${esc(a.threadId)}" data-company="${esc(c.id)}">Reply</button>${gmail}</div>`}
       </li>`;
     }
@@ -1651,6 +1730,16 @@
     'task-done': async el => {
       el.disabled = true;
       try { const r = await write('saveTask', { id: el.dataset.id, done: true }, 'To-do done'); if (r) toast('Done'); } catch (e) { toast(e.message, 'error'); el.disabled = false; }
+    },
+    'add-found': async el => {
+      const d = el.dataset;
+      const pref = d.pref === '1';
+      el.disabled = true;
+      const when = d.date ? new Date(d.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+      try {
+        await write('savePerson', { companyId: d.company, name: d.name, email: d.email, preferred: pref, notes: 'Found in their email' + (when ? ' of ' + when : '') },
+          pref ? d.name + ' added and will get product emails' : d.name + ' added as a contact');
+      } catch (e) { el.disabled = false; toast(e.message, 'error'); }
     },
     'set-contact': async el => {
       const on = el.dataset.on !== '0';

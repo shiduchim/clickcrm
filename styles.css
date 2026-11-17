@@ -441,3 +441,14 @@ table.preview tr.skip td { color: var(--muted); }
 .cc-list { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 12px 8px; margin: 10px 0; }
 .cc-list legend { font-size: 0.85rem; color: var(--muted); padding: 0 4px; }
 .cc-list .check { min-height: 32px; padding-top: 4px; }
+
+/* ---------- people found in an email (1.7.1) ---------- */
+.found-people { margin-top: 12px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--accent-soft); font-size: 0.86rem; }
+.found-title { font-weight: 600; margin-bottom: 4px; }
+.found-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 4px 0; border-top: 1px solid var(--line); }
+.found-row:first-of-type { border-top: 0; }
+.found-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.found-btns .btn.small { min-height: 30px; padding: 3px 9px; font-size: 0.8rem; }
+.sent-next { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; color: var(--st-yes); font-weight: 500; }
+.sent-next.is-held { color: var(--st-sent); }
+.sent-next .btn.small { min-height: 30px; padding: 3px 10px; font-size: 0.8rem; }
