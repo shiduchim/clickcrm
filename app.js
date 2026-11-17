@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.8.1';
+  const CLIENT_VERSION = '1.9.0';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -1359,6 +1359,12 @@
             <pre class="footer-preview" dir="ltr" style="margin-top:8px">${esc(usFooterText())}</pre>
             <p class="form-error" id="us-error"></p>
             <div class="actions" style="margin-top:10px"><button class="btn primary" data-act="save-us">Save USA emails</button></div>
+            <div class="form-grid" style="margin-top:14px">
+              <label class="field full"><span>Send a test of the English email to</span><input name="usTestTo" id="us-test-to" type="email" dir="ltr" placeholder="your personal email"></label>
+            </div>
+            <p class="hint">Uses the saved English email and the settings above. The subject starts with [TEST]. No company is marked, and it doesn't count toward the daily limit.</p>
+            <p class="form-error" id="us-test-error"></p>
+            <div class="actions" style="margin-top:6px"><button class="btn" data-act="send-us-test">Send test email</button></div>
           </section>
           <section class="panel">
             <div class="panel-head"><h2>Added to every product email</h2></div>
@@ -1974,6 +1980,19 @@
       try {
         const r = await write('saveSettings', { senderNameEn: d.senderNameEn, senderAddressEn: d.senderAddressEn, usAuto: !!d.usAuto, usPerDay: d.usPerDay, usProductId: d.usProductId }, 'USA emails saved');
         if (r) toast(d.usAuto ? 'Automatic US emails are on' : 'USA settings saved');
+      } catch (e) { err.textContent = e.message; }
+      el.disabled = false;
+    },
+    'send-us-test': async el => {
+      const input = $('#us-test-to');
+      const err = $('#us-test-error');
+      err.textContent = '';
+      const to = String(input.value || '').trim();
+      if (!to) { err.textContent = 'Enter the email address to send the test to.'; return; }
+      el.disabled = true;
+      try {
+        await api('sendUsTest', { to }, { reqId: newReqId() });
+        toast('Test email sent to ' + to);
       } catch (e) { err.textContent = e.message; }
       el.disabled = false;
     },
