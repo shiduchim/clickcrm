@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.9.0';
+  const CLIENT_VERSION = '1.9.1';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -103,7 +103,7 @@
     const s = S.settings;
     return ['--', s.senderNameEn || '(your name in English)', s.senderAddressEn || '(your postal address in English)',
       [S.me, s.senderPhone].filter(Boolean).join(' | '), '',
-      'This is a one-time promotional email about a free Revit add-in.',
+      'This is a one-time promotional email about a Revit add-in.',
       'If you\'d rather not hear from me, reply "unsubscribe" and I won\'t write again.'].join('\n');
   }
   function syncCountryButtons() {
