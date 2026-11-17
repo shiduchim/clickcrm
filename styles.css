@@ -463,3 +463,11 @@ body.country-us .country-switch .btn[aria-pressed="true"] { background: #B23A48;
 .country-tag { display: inline-block; vertical-align: middle; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600;
   background: var(--accent, #1D5BB6); color: var(--accent-ink, #fff); }
 body.country-us .country-tag { background: #B23A48; color: #fff; }
+
+/* 1.8.1: Hebrew / English email boxes in the product window */
+.lang-box { border: 2px solid var(--accent, #1D5BB6); border-radius: 10px; padding: 10px 14px 14px; margin: 6px 0; display: grid; gap: 10px; min-width: 0; }
+.lang-box.us { border-color: #B23A48; }
+.lang-box legend { font-weight: 600; padding: 0 6px; }
+.lang-box .hint { margin: 0; }
+.lang-flag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.75rem; color: #fff; background: #1D5BB6; margin-right: 4px; }
+.lang-flag.us { background: #B23A48; }

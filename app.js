@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.8.0';
+  const CLIENT_VERSION = '1.8.1';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -1581,12 +1581,17 @@
         ${field('Short description (for you)', 'description', p.description, { full: true })}
         ${field('Website', 'website', p.website, { dir: 'ltr' })}
         ${field('Store / download link', 'storeLink', p.storeLink, { dir: 'ltr' })}
-        ${field('Pitch subject (פרסומת: is added automatically)', 'pitchSubject', p.pitchSubject, { full: true })}
-        <label class="field full"><span>Pitch email text</span><textarea name="pitchBody" class="tall" dir="rtl">${esc(p.pitchBody)}</textarea>
-          <span class="hint">Placeholders: {company} {sender} {product} {link} {store}. Your legal footer is added automatically.</span></label>
-        ${field('English subject (USA)', 'pitchSubjectEn', p.pitchSubjectEn, { full: true, dir: 'ltr' })}
-        <label class="field full"><span>English email text (USA)</span><textarea name="pitchBodyEn" class="tall" dir="ltr">${esc(p.pitchBodyEn)}</textarea>
-          <span class="hint">Sent to US companies. Same placeholders. The English footer (your address and the unsubscribe line) is added automatically. No “פרסומת:”.</span></label>
+        <fieldset class="lang-box full"><legend><span class="lang-flag il">Israel</span> Hebrew email</legend>
+          <p class="hint">Sent to Israeli companies that said yes. “פרסומת:” and the Hebrew legal footer are added automatically.</p>
+          ${field('Subject', 'pitchSubject', p.pitchSubject, { full: true })}
+          <label class="field full"><span>Email text</span><textarea name="pitchBody" class="tall" dir="rtl">${esc(p.pitchBody)}</textarea></label>
+        </fieldset>
+        <fieldset class="lang-box us full"><legend><span class="lang-flag us">USA</span> English email</legend>
+          <p class="hint">Sent once to each US company. Your English address and the unsubscribe line are added automatically. No “פרסומת:”.</p>
+          ${field('Subject', 'pitchSubjectEn', p.pitchSubjectEn, { full: true, dir: 'ltr' })}
+          <label class="field full"><span>Email text</span><textarea name="pitchBodyEn" class="tall" dir="ltr">${esc(p.pitchBodyEn)}</textarea></label>
+        </fieldset>
+        <p class="hint full">Placeholders for both: {company} {sender} {product} {link} {store}</p>
         <label class="check full"><input type="checkbox" name="active" ${p.active === 'TRUE' ? 'checked' : ''}><span>Active (can be sent)</span></label>
       </div>`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-save>${p.id ? 'Save product' : 'Add product'}</button>`, { wide: true });
