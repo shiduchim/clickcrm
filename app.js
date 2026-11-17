@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.5.0';
+  const CLIENT_VERSION = '1.6.0';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -388,7 +388,49 @@
       if (el) { el.focus(); try { el.setSelectionRange(keep.start, keep.end); } catch (e) { /* not a text field */ } }
     }
     updateSyncPill();
+    applyTranslation();
   }
+
+  // ---- Translate to English (toggle in the top bar) ----
+  const LS_TR = 'clickcrm.translate';
+  const trCache = new Map();
+  let trOn = false;
+  try { trOn = localStorage.getItem(LS_TR) === '1'; } catch (e) { /* ignore */ }
+  const NON_EN = /[֐-׿Ѐ-ӿ]/;
+  function syncTrButton() {
+    const b = $('#tr-toggle'); if (!b) return;
+    b.setAttribute('aria-pressed', trOn ? 'true' : 'false');
+    b.textContent = trOn ? 'English: on' : 'English: off';
+  }
+  async function applyTranslation() {
+    syncTrButton();
+    if (!trOn) return;
+    const els = $$('#view .act-body, #view .reply-text, #view .proof, #view .mail-body, #view .task-body > div')
+      .filter(el => !el.dataset.orig && NON_EN.test(el.textContent));
+    const need = [...new Set(els.map(el => el.textContent.trim()).filter(t => !trCache.has(t)))];
+    for (let i = 0; i < need.length; i += 20) {
+      const chunk = need.slice(i, i + 20);
+      try {
+        const r = await api('translate', { texts: chunk });
+        chunk.forEach((t, k) => trCache.set(t, (r.texts && r.texts[k]) || t));
+      } catch (e) { toast('Translation failed: ' + e.message, 'error'); trOn = false; syncTrButton(); return; }
+    }
+    if (!trOn) return;
+    els.forEach(el => {
+      const t = el.textContent.trim();
+      if (!trCache.has(t) || !el.isConnected || el.dataset.orig) return;
+      el.dataset.orig = el.textContent;
+      el.textContent = trCache.get(t);
+      el.setAttribute('dir', 'ltr');
+      el.title = 'Original: ' + t.slice(0, 300);
+    });
+  }
+  function toggleTranslate() {
+    trOn = !trOn;
+    try { localStorage.setItem(LS_TR, trOn ? '1' : '0'); } catch (e) { /* ignore */ }
+    render();
+  }
+
   function errorBox(msg, act) {
     return `<div class="panel"><p>${esc(msg)}</p><button class="btn" data-act="${esc(act)}">Try again</button></div>`;
   }
@@ -651,11 +693,12 @@
           <section class="panel">
             <div class="panel-head"><h2>People</h2><button class="link-btn" data-act="person" data-company="${esc(c.id)}">Add person</button></div>
             ${b.people.length ? b.people.map(p => `
-              <div class="person"><div class="grow"><b dir="auto">${esc(p.name)}</b>${p.role ? ` <span class="muted" dir="auto">${esc(p.role)}</span>` : ''}
+              <div class="person"><div class="grow"><b dir="auto">${esc(p.name)}</b>${contactId(b.people) === p.id ? ' <span class="badge">Gets emails</span>' : ''}${p.role ? ` <span class="muted" dir="auto">${esc(p.role)}</span>` : ''}
                 <div class="small">${p.email ? esc(p.email) : ''}${p.email && p.phone ? ' · ' : ''}${p.phone ? `<a href="${esc(telHref(p.phone))}">${esc(p.phone)}</a>` : ''}</div>
                 ${p.notes ? `<div class="small muted" dir="auto">${esc(p.notes)}</div>` : ''}</div>
+                ${p.email && contactId(b.people) !== p.id ? `<button class="link-btn small" data-act="set-contact" data-id="${esc(p.id)}">Send emails here</button>` : ''}
                 <button class="link-btn small" data-act="person" data-id="${esc(p.id)}" data-company="${esc(c.id)}">Edit</button></div>`).join('')
-              : '<p class="empty">Add people when they give you their details, for example after they reply or call.</p>'}
+              : '<p class="empty">Add people when they give you their details, for example after they reply or call. Once a person has an email, product emails go to them instead of the general address.</p>'}
           </section>
           <div class="actions">
             <button class="btn ghost" data-act="archive" data-id="${esc(c.id)}" data-archived="${isArchived(c) ? '' : '1'}">${isArchived(c) ? 'Restore company' : 'Archive company'}</button>
@@ -1145,6 +1188,18 @@
     }, 'To-do saved');
   }
 
+  /** Same rule as the backend: the chosen person, else the most recently edited one with an email. */
+  function contactId(people) {
+    let best = null;
+    (people || []).forEach(p => {
+      if (!p.email) return;
+      if (!best) { best = p; return; }
+      if (best.preferred === 'TRUE') return;
+      if (p.preferred === 'TRUE' || String(p.updatedAt || p.createdAt) >= String(best.updatedAt || best.createdAt)) best = p;
+    });
+    return best ? best.id : '';
+  }
+
   function personModal(companyId, personId) {
     const p = personId ? (S.people.find(x => x.id === personId) || {}) : {};
     const m = openModal(p.id ? 'Edit person' : 'Add person', `
@@ -1420,6 +1475,7 @@
   const ACTS = {
     'close-modal': () => closeModal(),
     'sign-out': () => signOut(),
+    'toggle-translate': () => toggleTranslate(),
     'check-replies': async (el) => {
       el.disabled = true;
       try {
@@ -1447,6 +1503,9 @@
     'task-done': async el => {
       el.disabled = true;
       try { const r = await write('saveTask', { id: el.dataset.id, done: true }, 'To-do done'); if (r) toast('Done'); } catch (e) { toast(e.message, 'error'); el.disabled = false; }
+    },
+    'set-contact': async el => {
+      try { await write('setContactPerson', { id: el.dataset.id }, 'Emails will go to this person'); } catch (e) { toast(e.message, 'error'); }
     },
     'person': el => personModal(el.dataset.company, el.dataset.id),
     'delete-person': async el => {

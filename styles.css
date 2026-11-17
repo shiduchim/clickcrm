@@ -397,3 +397,5 @@ table.preview tr.skip td { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+#tr-toggle[aria-pressed="true"] { background: var(--accent, #1D5BB6); color: #fff; border-color: transparent; }
