@@ -189,8 +189,13 @@ pre { font-family: var(--font); white-space: pre-wrap; margin: 0; }
 
 /* ---------- today ---------- */
 .today-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-.reply { padding: 14px 0; border-top: 1px solid var(--line); }
-.reply:first-of-type { border-top: 0; padding-top: 0; }
+.reply { padding: 14px 16px; margin: 0 0 18px; border: 1px solid var(--line); border-left: 5px solid var(--accent);
+  border-radius: var(--r-md); background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+.reply:last-of-type { margin-bottom: 0; }
+.reply.is-bounce { border-left-color: var(--st-unsub); }
+.reply .reply-head { padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.reply .reply-co { font-size: 1.08rem; }
+.reply .actions { margin-top: 12px; }
 .reply-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .reply-co { font-weight: 600; text-decoration: none; color: var(--ink); }
 .reply-head time { margin-left: auto; color: var(--muted); font-size: 0.82rem; }
@@ -398,4 +403,41 @@ table.preview tr.skip td { color: var(--muted); }
   * { animation: none !important; transition: none !important; }
 }
 
+#tr-toggle { min-height: 28px; min-width: 0; padding: 2px 8px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; }
 #tr-toggle[aria-pressed="true"] { background: var(--accent, #1D5BB6); color: #fff; border-color: transparent; }
+
+/* ---------- emails: header box, new text, earlier messages (1.7.0) ---------- */
+.mail-head { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 8px 0 0;
+  padding: 8px 10px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r-sm); font-size: 0.85rem; }
+.mail-head dt { color: var(--muted); font-weight: 500; }
+.mail-head dd { margin: 0; overflow-wrap: anywhere; }
+.mail-head dd > span[dir="auto"] { display: inline-block; }
+.addr { display: inline-block; margin-right: 2px; }
+.addr-mail { color: var(--muted); }
+.addr > span[dir="auto"] + .addr-mail::before { content: "<"; }
+.addr > span[dir="auto"] + .addr-mail::after { content: ">"; }
+.mail-new { margin-top: 8px; }
+.mail-new .act-body { font-size: 0.97rem; margin-top: 0; }
+.older { margin-top: 10px; }
+.older > summary { cursor: pointer; color: var(--accent); font-size: 0.87rem; padding: 4px 0; }
+.quoted { margin-top: 10px; padding: 2px 0 2px 12px; border-left: 3px solid var(--line); }
+.quoted.from-me { border-left-color: var(--st-yes); }
+.quoted .mail-head { margin-top: 4px; }
+.you-tag { font-size: 0.72rem; font-weight: 600; color: var(--st-yes); }
+
+/* ---------- what we sent them ---------- */
+.sent-sum { margin: 10px 0 0; padding: 8px 10px; border: 1px dashed var(--line); border-radius: var(--r-sm); font-size: 0.84rem; }
+.sent-sum.open { margin: 0 0 14px; }
+.sent-sum.empty-sum { color: var(--muted); }
+.sent-title { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sent-sum ul { list-style: none; margin: 0; padding: 0; }
+.sent-sum li { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 2px 0; }
+.sent-kind { font-weight: 500; }
+.sent-kind.is-prod { color: var(--st-yes); }
+.sent-sum time { color: var(--muted); }
+.sent-to { color: var(--muted); overflow-wrap: anywhere; }
+
+/* ---------- product email Cc ---------- */
+.cc-list { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 12px 8px; margin: 10px 0; }
+.cc-list legend { font-size: 0.85rem; color: var(--muted); padding: 0 4px; }
+.cc-list .check { min-height: 32px; padding-top: 4px; }

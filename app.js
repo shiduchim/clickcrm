@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.6.2';
+  const CLIENT_VERSION = '1.7.0';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -400,7 +400,8 @@
   function syncTrButton() {
     const b = $('#tr-toggle'); if (!b) return;
     b.setAttribute('aria-pressed', trOn ? 'true' : 'false');
-    b.textContent = trOn ? 'English: on' : 'English: off';
+    b.textContent = 'EN';
+    b.title = trOn ? 'English translation is on (click to show the original)' : 'Show Hebrew and Russian messages in English';
   }
   async function applyTranslation() {
     syncTrButton();
@@ -545,11 +546,12 @@
   function replyCard(a) {
     const c = companyById(a.companyId) || { id: a.companyId, nameEn: a.companyName };
     return `
-      <article class="reply">
+      <article class="reply ${a.kind === 'bounce' ? 'is-bounce' : ''}">
         <div class="reply-head"><a class="reply-co" href="#/company/${encodeURIComponent(c.id)}" dir="auto">${esc(primaryName(c))}</a>
           ${badge(status(c))}<time>${esc(fmtDateTime(a.date))}</time></div>
-        <div class="reply-from" dir="auto">${esc(a.fromAddr)}</div>
-        <p class="reply-text" dir="auto">${esc(String(a.body || '').slice(0, 2500))}${String(a.body || '').length > 2500 ? '…' : ''}</p>
+        ${a.kind === 'bounce' ? '<div class="small muted">Email bounced</div>' : ''}
+        ${sentSummary(a.sent)}
+        <div class="reply-mail">${mailView(a)}</div>
         ${reviewButtons(a, c)}
       </article>`;
   }
@@ -693,18 +695,21 @@
           <section class="panel">
             <div class="panel-head"><h2>People</h2><button class="link-btn" data-act="person" data-company="${esc(c.id)}">Add person</button></div>
             ${b.people.length ? b.people.map(p => `
-              <div class="person"><div class="grow"><b dir="auto">${esc(p.name)}</b>${contactId(b.people) === p.id ? ' <span class="badge">Gets emails</span>' : ''}${p.role ? ` <span class="muted" dir="auto">${esc(p.role)}</span>` : ''}
+              <div class="person"><div class="grow"><b dir="auto">${esc(p.name)}</b>${contactIds(b.people).indexOf(p.id) >= 0 ? ` <span class="badge st-yes">Gets emails${contactIds(b.people)[0] === p.id ? '' : ' (Cc)'}</span>` : ''}${p.role ? ` <span class="muted" dir="auto">${esc(p.role)}</span>` : ''}
                 <div class="small">${p.email ? esc(p.email) : ''}${p.email && p.phone ? ' · ' : ''}${p.phone ? `<a href="${esc(telHref(p.phone))}">${esc(p.phone)}</a>` : ''}</div>
                 ${p.notes ? `<div class="small muted" dir="auto">${esc(p.notes)}</div>` : ''}</div>
-                ${p.email && contactId(b.people) !== p.id ? `<button class="link-btn small" data-act="set-contact" data-id="${esc(p.id)}">Send emails here</button>` : ''}
+                ${p.email ? (p.preferred === 'TRUE'
+                  ? `<button class="link-btn small" data-act="set-contact" data-id="${esc(p.id)}" data-on="0">Stop emails here</button>`
+                  : `<button class="link-btn small" data-act="set-contact" data-id="${esc(p.id)}" data-on="1">${b.people.some(x => x.preferred === 'TRUE' && x.email) ? 'Also send here' : 'Send emails here'}</button>`) : ''}
                 <button class="link-btn small" data-act="person" data-id="${esc(p.id)}" data-company="${esc(c.id)}">Edit</button></div>`).join('')
-              : '<p class="empty">Add people when they give you their details, for example after they reply or call. Once a person has an email, product emails go to them instead of the general address.</p>'}
+              : '<p class="empty">Add people when they give you their details, for example after they reply or call. Once a person has an email, product emails go to them instead of the general address. Use “Send emails here” on several people to send to all of them (first one To, the others Cc).</p>'}
           </section>
           <div class="actions">
             <button class="btn ghost" data-act="archive" data-id="${esc(c.id)}" data-archived="${isArchived(c) ? '' : '1'}">${isArchived(c) ? 'Restore company' : 'Archive company'}</button>
           </div>
         </div>
         <section class="panel">
+          ${sentSummary(b.activities.filter(a => a.type === 'email_out'), true)}
           <div class="panel-head"><h2>History</h2><span class="small muted">${plural(b.activities.length, 'entry', 'entries')}</span></div>
           <ul class="timeline">
             ${pending.map(i => `<li class="act pending"><div class="act-head"><span class="act-kind">${i.action === 'logCall' ? 'Call' : 'Note'}</span><time>Waiting to save</time></div>
@@ -781,10 +786,146 @@
     </section>`;
   }
 
-  function bodyBlock(text) {
+  // ---------- email display ----------
+  const HEAD_KEYS = { from: 'from', 'מאת': 'from', sent: 'sent', date: 'sent', 'נשלח': 'sent', 'תאריך': 'sent',
+    to: 'to', 'אל': 'to', cc: 'cc', 'עותק': 'cc', subject: 'subject', 'נושא': 'subject' };
+  const HEAD_RE = /^(from|sent|date|to|cc|subject|מאת|נשלח|תאריך|אל|עותק|נושא)\s*:\s*(.*)$/i;
+
+  /** Clean an email's plain text: no hidden direction marks, no <mailto:…> copies, no [cid:image…] placeholders. */
+  function cleanMail(t) {
+    return String(t || '').replace(/\r/g, '')
+      .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+      .replace(/[\u00a0\u202f]/g, ' ')
+      .replace(/<mailto:[^>]*>/gi, '')
+      .replace(/\[cid:[^\]]*\]/gi, '')
+      .replace(/[ \t]+$/gm, '');
+  }
+  /** Decode MIME words like =?UTF-8?B?…?= that some mail programs leave in names. */
+  function decodeWords(v) {
+    return String(v || '').replace(/=\?utf-8\?([bq])\?([^?]*)\?=/gi, (all, enc, txt) => {
+      try {
+        const bin = enc.toLowerCase() === 'b' ? atob(txt)
+          : txt.replace(/_/g, ' ').replace(/=([0-9a-f]{2})/gi, (x, h) => String.fromCharCode(parseInt(h, 16)));
+        return new TextDecoder().decode(Uint8Array.from(bin, ch => ch.charCodeAt(0)));
+      } catch (e) { return all; }
+    });
+  }
+  function tidy(t) { return t.replace(/^[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim(); }
+
+  /** Split a received email (with its quoted conversation) into separate messages, newest first.
+   *  Understands Outlook headers (From:/Sent:/To:/Cc:/Subject:, also in Hebrew) and Gmail's "On … wrote:" lines. */
+  function splitThread(text) {
+    const lines = cleanMail(text).split('\n');
+    const msgs = [];
+    let cur = { head: {}, lines: [] };
+    const unq = l => l.replace(/^(\s*>)+\s?/, '');
+    for (let i = 0; i < lines.length; i++) {
+      const L = unq(lines[i]).trim();
+      if (/^-{2,}\s*(original message|forwarded message|הודעה מקורית|הודעה שהועברה)\s*-{2,}$/i.test(L)) continue;
+      // Outlook block: a From: line with more header lines right after it
+      if (/^(from|מאת)\s*:/i.test(L) && lines.slice(i + 1, i + 5).some(x => /^(sent|date|to|subject|נשלח|תאריך|אל|נושא)\s*:/i.test(unq(x).trim()))) {
+        msgs.push(cur);
+        const head = {};
+        let j = i, lastKey = '';
+        for (; j < lines.length; j++) {
+          const x = unq(lines[j]).trim();
+          const m = x.match(HEAD_RE);
+          if (m) { lastKey = HEAD_KEYS[m[1].toLowerCase()]; head[lastKey] = m[2].trim(); continue; }
+          if (!x) break;
+          if (lastKey && lastKey !== 'subject' && /[@;,]/.test(x)) { head[lastKey] += ' ' + x; continue; } // wrapped address list
+          break;
+        }
+        cur = { head, lines: [] };
+        i = j - 1;
+        continue;
+      }
+      // Gmail: "On Tue, 17 Nov 2026, Name <a@b> wrote:" or "בתאריך … מאת Name <a@b>:" (may wrap over 2–3 lines)
+      if (/^(on\s|בתאריך\s)/i.test(L)) {
+        let joined = L, k = i;
+        while (k < i + 2 && !/(wrote|כתב|כתבה|כתב\/ה)\s*:\s*$|>\s*:\s*$/i.test(joined) && k + 1 < lines.length) { k++; joined += ' ' + unq(lines[k]).trim(); }
+        if (/(wrote|כתב|כתבה|כתב\/ה)\s*:\s*$|>\s*:\s*$/i.test(joined) && joined.length < 300) {
+          msgs.push(cur);
+          const t = joined.replace(/^(on|בתאריך)\s+/i, '').replace(/\s*(wrote|כתב|כתבה|כתב\/ה)?\s*:\s*$/i, '');
+          let when = t, who = '';
+          const he = t.split(/\s+מאת\s+/);
+          if (he.length > 1) { when = he[0]; who = he.slice(1).join(' מאת '); }
+          else {
+            const tm = t.match(/^(.*?\d{1,2}:\d{2}(?:\s*[ap]\.?m\.?)?)\s*,?\s*(.*)$/i);
+            if (tm) { when = tm[1]; who = tm[2]; }
+          }
+          cur = { head: { from: who.replace(/,\s*</, ' <'), sent: when }, lines: [] };
+          i = k;
+          continue;
+        }
+      }
+      cur.lines.push(unq(lines[i]));
+    }
+    msgs.push(cur);
+    const sq = v => decodeWords(v).replace(/\s+/g, ' ').replace(/<\s+/g, '<').replace(/\s+>/g, '>').trim();
+    return msgs.map(m => { const h = {}; Object.keys(m.head).forEach(k => { h[k] = sq(m.head[k]); }); return { head: h, body: tidy(m.lines.join('\n')) }; })
+      .filter((m, k) => k === 0 || m.body || Object.keys(m.head).length);
+  }
+
+  function isMe(addr) { return !!S.me && String(addr || '').toLowerCase().indexOf(S.me) >= 0; }
+
+  /** From / To / Cc / Subject as labelled rows. */
+  function mailHead(h) {
+    const row = (label, v, html) => (v ? `<dt>${label}</dt><dd>${html || `<span dir="auto">${esc(v)}</span>`}</dd>` : '');
+    return `<dl class="mail-head">${row('From', h.from, addrList(h.from))}${row('Date', h.sent)}${row('To', h.to, addrList(h.to))}${row('Cc', h.cc, addrList(h.cc))}${row('Subject', h.subject)}</dl>`;
+  }
+  /** "Name" <a@b>; Other <c@d>  →  each person as: name (in its own direction) then the address, left to right. */
+  function addrList(v) {
+    const parts = String(v || '').match(/[^,;<]*<[^>]*>|[^,;\s][^,;]*/g) || [];
+    return parts.map(x => {
+      const m = x.match(/^\s*(.*?)\s*<([^>]*)>\s*$/);
+      const name = (m ? m[1] : '').replace(/^["'\s]+|["'\s]+$/g, '');
+      const mail = m ? m[2].trim() : x.trim();
+      if (!mail) return '';
+      return `<span class="addr">${name && name.toLowerCase() !== mail.toLowerCase() ? `<span dir="auto">${esc(name)}</span> ` : ''}<span class="addr-mail" dir="ltr">${esc(mail)}</span></span>`;
+    }).filter(Boolean).join('<span class="addr-sep">, </span>');
+  }
+
+  /** A whole email: header box, the new text, and the older messages folded away underneath. */
+  function mailView(a) {
+    const msgs = splitThread(a.fullBody || a.body);
+    const top = msgs[0];
+    const older = msgs.slice(1);
+    const head = { from: a.fromAddr, to: a.toAddr || top.head.to, cc: a.ccAddr || top.head.cc, subject: a.subject };
+    const olderHtml = older.length ? `<details class="older"><summary>Earlier in this conversation (${older.length})</summary>
+      ${older.map(m => `<div class="quoted ${isMe(m.head.from) ? 'from-me' : ''}">
+        ${isMe(m.head.from) ? '<span class="you-tag">Your email</span>' : ''}${mailHead(m.head)}
+        ${m.body ? bodyBlock(m.body) : '<p class="small muted">(no text)</p>'}</div>`).join('')}
+      </details>` : '';
+    return `${mailHead(head)}
+      <div class="mail-new">${top.body ? bodyBlock(top.body, 1200) : '<p class="small muted">(no new text)</p>'}</div>
+      ${olderHtml}`;
+  }
+
+  /** What we have sent this company: kind, date, to (and Cc). Newest first. */
+  function sentSummary(list, open) {
+    const out = (list || []).filter(a => a.type === undefined || a.type === 'email_out')
+      .slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
+    if (!out.length) return '<p class="sent-sum empty-sum">We haven’t emailed them yet.</p>';
+    const label = a => {
+      if (a.kind === 'consent') return 'Consent request';
+      if (a.kind === 'product') { const p = productById(a.productId); return (p ? p.name : 'Product') + ' email'; }
+      if (a.kind === 'reply') return 'Reply';
+      if (a.kind === 'gmail') return 'From Gmail';
+      return 'Email';
+    };
+    const prodSent = out.some(a => a.kind === 'product');
+    return `<div class="sent-sum ${open ? 'open' : ''}">
+      <div class="sent-title">What we sent them${prodSent ? '' : ' <span class="badge st-sent">No product email yet</span>'}</div>
+      <ul>${out.map(a => `<li><span class="sent-kind ${a.kind === 'product' ? 'is-prod' : ''}">${esc(label(a))}</span>
+        <time>${esc(fmtDateTime(a.date))}</time>
+        <span class="sent-to" dir="ltr">→ ${esc(a.toAddr || '')}${a.ccAddr ? ` · Cc ${esc(a.ccAddr)}` : ''}</span></li>`).join('')}</ul>
+    </div>`;
+  }
+
+  function bodyBlock(text, max) {
     const t = String(text || '');
     if (!t) return '';
-    const long = t.length > 380 || t.split('\n').length > 6;
+    const long = max ? t.length > max : (t.length > 380 || t.split('\n').length > 6);
     return `<div class="act-body ${long ? 'clamp' : ''}" dir="auto">${esc(t)}</div>${long ? '<button class="link-btn small" data-act="expand">Show all</button>' : ''}`;
   }
 
@@ -794,10 +935,7 @@
     if (a.type === 'email_in') {
       return `<li class="act act-in ${a.unread === 'TRUE' ? 'is-new' : ''}">
         <div class="act-head"><span class="act-kind">${a.kind === 'bounce' ? 'Email bounced' : 'Email received'}</span>${a.unread === 'TRUE' ? '<span class="new-dot">New</span>' : ''}${when}</div>
-        <div class="act-line" dir="auto">From ${esc(a.fromAddr)}</div>
-        ${a.ccAddr ? `<div class="act-line" dir="auto">Cc ${esc(a.ccAddr)}</div>` : ''}
-        <div class="act-subj" dir="auto">${esc(a.subject)}</div>
-        ${bodyBlock(a.fullBody || a.body)}
+        ${mailView(a)}
         ${a.unread === 'TRUE' ? reviewButtons(a, c) : `<div class="act-actions"><button class="btn small" data-act="compose-reply" data-thread="${esc(a.threadId)}" data-company="${esc(c.id)}">Reply</button>${gmail}</div>`}
       </li>`;
     }
@@ -805,8 +943,7 @@
       const kind = { consent: 'Consent request sent', product: 'Product email sent', reply: 'Reply sent', gmail: 'Email sent from Gmail' }[a.kind] || 'Email sent';
       return `<li class="act act-out">
         <div class="act-head"><span class="act-kind">${esc(kind)}</span>${when}</div>
-        <div class="act-line" dir="auto">To ${esc(a.toAddr)}</div>
-        <div class="act-subj" dir="auto">${esc(a.subject)}</div>
+        ${mailHead({ to: a.toAddr, cc: a.ccAddr, subject: a.subject })}
         ${bodyBlock(a.body)}
         ${gmail ? `<div class="act-actions">${gmail}</div>` : ''}
       </li>`;
@@ -1189,16 +1326,15 @@
     }, 'To-do saved');
   }
 
-  /** Same rule as the backend: the chosen person, else the most recently edited one with an email. */
-  function contactId(people) {
+  /** Same rule as the backend: everyone marked "Gets emails" (oldest first; first = To, rest = Cc),
+   *  else the most recently edited person with an email. Returns person ids. */
+  function contactIds(people) {
+    const withEmail = (people || []).filter(p => p.email && p.deleted !== 'TRUE');
+    const chosen = withEmail.filter(p => p.preferred === 'TRUE').sort((x, y) => String(x.createdAt).localeCompare(String(y.createdAt)));
+    if (chosen.length) return chosen.map(p => p.id);
     let best = null;
-    (people || []).forEach(p => {
-      if (!p.email) return;
-      if (!best) { best = p; return; }
-      if (best.preferred === 'TRUE') return;
-      if (p.preferred === 'TRUE' || String(p.updatedAt || p.createdAt) >= String(best.updatedAt || best.createdAt)) best = p;
-    });
-    return best ? best.id : '';
+    withEmail.forEach(p => { if (!best || String(p.updatedAt || p.createdAt) >= String(best.updatedAt || best.createdAt)) best = p; });
+    return best ? [best.id] : [];
   }
 
   function personModal(companyId, personId) {
@@ -1385,16 +1521,22 @@
     if (!prods.length) { toast('Add an active product first.', 'warn'); return; }
     const s = S.settings;
     const missing = !s.senderName || !s.senderAddress;
+    const people = S.people.filter(p => p.companyId === c.id && p.deleted !== 'TRUE');
+    const contacts = contactIds(people).map(id => String((people.find(p => p.id === id) || {}).email || '').toLowerCase()).filter(Boolean);
     const recips = [];
-    [c.consentFrom, c.email].concat(S.people.filter(p => p.companyId === c.id).map(p => p.email))
+    contacts.concat([c.consentFrom, c.email], people.map(p => p.email))
       .forEach(e => { e = String(e || '').toLowerCase(); if (e && recips.indexOf(e) < 0) recips.push(e); });
+    const nameOf = e => { const p = people.find(x => String(x.email || '').toLowerCase() === e); return p ? p.name : ''; };
     const p0 = prods[0];
     const m = openModal('Send product email', `
       ${missing ? '<div class="notice danger">Add your name and postal address in <a href="#/settings" data-act="close-modal">Settings</a> first. The law requires them in advertising emails.</div>' : ''}
       <div class="form-grid">
         <label class="field"><span>Product</span><select name="productId">${prods.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></label>
-        <label class="field"><span>To</span><select name="to" dir="ltr">${recips.map(e => `<option>${esc(e)}</option>`).join('')}</select></label>
+        <label class="field"><span>To</span><select name="to" dir="ltr">${recips.map(e => `<option value="${esc(e)}">${esc(e)}${nameOf(e) ? ' – ' + esc(nameOf(e)) : ''}</option>`).join('')}</select></label>
       </div>
+      ${recips.length > 1 ? `<fieldset class="cc-list"><legend>Cc (also gets it)</legend>
+        ${recips.map(e => `<label class="check" data-cc="${esc(e)}"><input type="checkbox" name="cc" value="${esc(e)}" ${contacts.indexOf(e) > 0 ? 'checked' : ''}><span dir="ltr">${esc(e)}${nameOf(e) ? ' – <span dir="auto">' + esc(nameOf(e)) + '</span>' : ''}</span></label>`).join('')}
+      </fieldset>` : ''}
       <label class="field"><span>Subject</span><div class="subject-row" dir="rtl"><span class="prefix">פרסומת:</span><input name="subject" dir="auto"></div></label>
       <label class="field"><span>Email text</span><textarea name="body" class="tall" dir="rtl"></textarea></label>
       <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="rtl">${esc(footerText())}</pre></div>
@@ -1409,13 +1551,18 @@
     };
     fillFor(p0.id);
     sel.addEventListener('change', () => fillFor(sel.value));
+    const toSel = $('[name=to]', m);
+    const syncCc = () => $$('[data-cc]', m).forEach(l => { const same = l.dataset.cc === toSel.value; l.hidden = same; if (same) $('input', l).checked = false; });
+    toSel.addEventListener('change', syncCc);
+    syncCc();
     sendFlow(m, {
       action: 'sendProduct',
       payload: () => {
         const d = formData(m);
         if (!d.subject || !d.body) { $('.send-status', m).className = 'send-status error'; $('.send-status', m).textContent = 'Write a subject and a text.'; return null; }
         if (/\{store\}|\{link\}/.test(d.body)) { $('.send-status', m).className = 'send-status error'; $('.send-status', m).textContent = 'A link is missing. Add it to the product (Products page) or remove the placeholder.'; return null; }
-        return { companyId: c.id, productId: d.productId, to: d.to, subject: d.subject, body: d.body };
+        const cc = $$('[name=cc]:checked', m).map(x => x.value).filter(e => e !== d.to);
+        return { companyId: c.id, productId: d.productId, to: d.to, cc, subject: d.subject, body: d.body };
       }
     }, 'Product email sent');
   }
@@ -1506,7 +1653,8 @@
       try { const r = await write('saveTask', { id: el.dataset.id, done: true }, 'To-do done'); if (r) toast('Done'); } catch (e) { toast(e.message, 'error'); el.disabled = false; }
     },
     'set-contact': async el => {
-      try { await write('setContactPerson', { id: el.dataset.id }, 'Emails will go to this person'); } catch (e) { toast(e.message, 'error'); }
+      const on = el.dataset.on !== '0';
+      try { await write('setContactPerson', { id: el.dataset.id, on }, on ? 'Product emails will go to this person' : 'This person won’t get product emails'); } catch (e) { toast(e.message, 'error'); }
     },
     'person': el => personModal(el.dataset.company, el.dataset.id),
     'delete-person': async el => {
