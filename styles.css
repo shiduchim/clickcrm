@@ -471,3 +471,6 @@ body.country-us .country-tag { background: #B23A48; color: #fff; }
 .lang-box .hint { margin: 0; }
 .lang-flag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.75rem; color: #fff; background: #1D5BB6; margin-right: 4px; }
 .lang-flag.us { background: #B23A48; }
+
+/* 1.10.0: Israel / USA / Other */
+.country-switch .btn + .btn { margin-left: -1px; }

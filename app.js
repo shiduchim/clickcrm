@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.9.2';
+  const CLIENT_VERSION = '1.10.0';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -32,7 +32,7 @@
     importRows: null,
     country: 'IL'
   };
-  try { if (localStorage.getItem(LS_COUNTRY) === 'US') S.country = 'US'; } catch (e) { /* ignore */ }
+  try { const v = localStorage.getItem(LS_COUNTRY); if (v === 'US' || v === 'OT') S.country = v; } catch (e) { /* ignore */ }
   const inflight = new Set();
   let gisReady = false;
 
@@ -75,8 +75,25 @@
   function badge(st, us) { return `<span class="badge ${stClass(st)}">${esc(stLabel(st, us))}</span>`; }
   function badgeFor(c) { return badge(status(c), isUs(c)); }
   // ---- countries ----
-  function countryOf(c) { return c && String(c.country || '').toUpperCase() === 'US' ? 'US' : 'IL'; }
-  function isUs(c) { return countryOf(c) === 'US'; }
+  // Groups: IL = Israel, US = USA, OT = other countries (stored as a 2-letter code, e.g. AR). US and OT get the English email.
+  const OTHER_COUNTRIES = { AR: 'Argentina', GT: 'Guatemala', PY: 'Paraguay', PG: 'Papua New Guinea', FJ: 'Fiji', PW: 'Palau',
+    CA: 'Canada', MX: 'Mexico', BR: 'Brazil', CL: 'Chile', CO: 'Colombia', PE: 'Peru', UY: 'Uruguay', CR: 'Costa Rica', PA: 'Panama',
+    EC: 'Ecuador', BO: 'Bolivia', HN: 'Honduras', SV: 'El Salvador', NI: 'Nicaragua', DO: 'Dominican Republic', GB: 'United Kingdom',
+    IE: 'Ireland', AU: 'Australia', NZ: 'New Zealand', ZA: 'South Africa', IN: 'India', SG: 'Singapore', PH: 'Philippines',
+    AE: 'United Arab Emirates', WS: 'Samoa', TO: 'Tonga', VU: 'Vanuatu', SB: 'Solomon Islands', OT: 'Other country' };
+  function countryCode(c) {
+    const t = String((c && c.country) || '').trim().toUpperCase();
+    if (!t || t === 'IL' || t === 'ISRAEL') return 'IL';
+    if (/^(US|USA|UNITED STATES)$/.test(t)) return 'US';
+    if (OTHER_COUNTRIES[t]) return t;
+    const k = Object.keys(OTHER_COUNTRIES).find(x => OTHER_COUNTRIES[x].toUpperCase() === t);
+    return k || 'OT';
+  }
+  function countryOf(c) { const k = countryCode(c); return k === 'IL' || k === 'US' ? k : 'OT'; }
+  function countryName(c) { const k = countryCode(c); return k === 'IL' ? 'Israel' : k === 'US' ? 'USA' : OTHER_COUNTRIES[k]; }
+  function groupName(g) { return g === 'US' ? 'USA' : g === 'OT' ? 'Other countries' : 'Israel'; }
+  /** English group: USA and other countries (one English email, no consent request). */
+  function isUs(c) { return countryOf(c) !== 'IL'; }
   function inCountry(c) { return countryOf(c) === S.country; }
   /** The same statuses, named for what they mean in the US (no consent step there). */
   function stLabel(st, us) {
@@ -99,16 +116,16 @@
     };
     return c.timezone ? at(c.timezone, 9, 16) : (at('America/New_York', 12, 16) && at('America/Los_Angeles', 9, 13));
   }
-  function usFooterText() {
+  function usFooterText(signed) {
     const s = S.settings;
-    return ['--', s.senderNameEn || '(your name in English)', s.senderAddressEn || '(your postal address in English)',
+    return ['--', signed ? null : (s.senderNameEn || '(your name in English)'), s.senderAddressEn || '(your postal address in English)',
       [S.me, s.senderPhone].filter(Boolean).join(' | '), '',
       'This is a one-time promotional email about a Revit add-in.',
-      'If you\'d rather not hear from me, reply "unsubscribe" and I won\'t write again.'].join('\n');
+      'If you\'d rather not hear from me, reply "unsubscribe" and I won\'t write again.'].filter(l => l !== null).join('\n');
   }
   function syncCountryButtons() {
     $$('[data-act="set-country"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.country === S.country ? 'true' : 'false'));
-    document.body.classList.toggle('country-us', S.country === 'US');
+    document.body.classList.toggle('country-us', S.country !== 'IL');
   }
   function confHtml(v) { return v ? `<span class="conf ${esc(v)}"><i></i>${esc(v)}</span>` : '<span class="conf"><i></i>Unknown</span>'; }
   function isArchived(c) { return c.archived === 'TRUE'; }
@@ -124,11 +141,11 @@
       product: p ? p.name : '', link: p ? p.website : '', store: p ? p.storeLink : ''
     };
   }
-  function footerText() {
+  function footerText(signed) {
     const s = S.settings;
     const contact = [S.me, s.senderPhone].filter(Boolean).join(' | ');
-    return ['--', s.senderName || '', s.senderAddress || '', contact, '',
-      'קיבלתם הודעה זו כי הסכמתם לקבל ממני מידע.', 'להסרה, השיבו להודעה זו עם המילה "הסר".'].join('\n');
+    return ['--', signed ? null : (s.senderName || ''), s.senderAddress || '', contact, '',
+      'קיבלתם הודעה זו כי הסכמתם לקבל ממני מידע.', 'להסרה, השיבו להודעה זו עם המילה "הסר".'].filter(l => l !== null).join('\n');
   }
   function gmailUrl(hash) { return 'https://mail.google.com/mail/?authuser=' + encodeURIComponent(S.me || S.email) + '#' + hash; }
 
@@ -488,7 +505,7 @@
     const today = todayYmd();
     const soonEnd = addDaysYmd(today, 7);
     const limit = Number(S.settings.dailyLimit || 20);
-    const us = S.country === 'US';
+    const us = S.country !== 'IL';
     const here = a => { const c = companyById(a.companyId); return c ? inCountry(c) : S.country === 'IL'; };
     const unread = S.unread.filter(here).sort((a, b) => String(b.date).localeCompare(String(a.date)));
     const tasks = S.tasks.filter(t => !t.companyId || here(t));
@@ -505,7 +522,7 @@
 
     return `
       <div class="page-head">
-        <div><h1>Today <span class="country-tag">${us ? 'USA' : 'Israel'}</span></h1><p>${esc(dFmt.format(new Date()))}</p></div>
+        <div><h1>Today <span class="country-tag">${groupName(S.country)}</span></h1><p>${esc(dFmt.format(new Date()))}</p></div>
         <div class="actions"><button class="btn" data-act="new-task">Add to-do</button><button class="btn" data-act="new-company">Add company</button></div>
       </div>
       <div class="today-grid">
@@ -678,11 +695,11 @@
   function viewCompanies() {
     const f = S.filters;
     const segments = Array.from(new Set(S.companies.filter(inCountry).map(c => c.segment).filter(Boolean))).sort();
-    const us = S.country === 'US';
+    const us = S.country !== 'IL';
     const opt = (v, label, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(label)}</option>`;
     return `
       <div class="page-head">
-        <div><h1>Companies <span class="country-tag">${us ? 'USA' : 'Israel'}</span></h1></div>
+        <div><h1>Companies <span class="country-tag">${groupName(S.country)}</span></h1></div>
         <div class="actions"><a class="btn" href="#/import">Import list</a><button class="btn primary" data-act="new-company">Add company</button></div>
       </div>
       <div class="filters">
@@ -700,7 +717,7 @@
   function companyListHtml() {
     const list = filteredCompanies();
     if (!S.companies.some(inCountry)) {
-      return `<div class="panel"><p>No ${S.country === 'US' ? 'US ' : ''}companies yet. Import the list from your research, or add one by hand.</p>
+      return `<div class="panel"><p>No ${S.country === 'IL' ? '' : groupName(S.country) + ' '}companies yet. Import the list from your research, or add one by hand.</p>
         <div class="actions"><a class="btn primary" href="#/import">Import list</a><button class="btn" data-act="new-company">Add company</button></div></div>`;
     }
     if (!list.length) return '<div class="panel"><p class="empty">No companies match these filters.</p></div>';
@@ -712,7 +729,7 @@
     const tags = Object.keys(ps).map(pid => { const p = productById(pid); return p && ps[pid] ? `<span class="tag">${esc(p.name)}: ${esc(ps[pid])}</span>` : ''; }).join('');
     return `<a class="co-row" href="#/company/${encodeURIComponent(c.id)}">
       <span><span class="co-name" dir="auto">${esc(primaryName(c))}</span>${secondaryName(c) ? `<span class="co-sub">${esc(secondaryName(c))}</span>` : ''}</span>
-      <span class="co-meta" dir="auto">${esc([c.city, isUs(c) ? c.state : ''].filter(Boolean).join(', '))}</span>
+      <span class="co-meta" dir="auto">${esc([c.city, countryOf(c) === 'US' ? c.state : countryOf(c) === 'OT' ? countryName(c) : ''].filter(Boolean).join(', '))}</span>
       <span class="co-conf">${confHtml(c.revitConfidence)}</span>
       <span class="co-status">${badgeFor(c)}${tags}</span>
     </a>`;
@@ -727,7 +744,7 @@
     const pending = S.outbox.filter(i => i.payload && i.payload.companyId === c.id && (i.action === 'addNote' || i.action === 'logCall'));
     const openTasks = b.tasks.filter(t => t.done !== 'TRUE').sort(byDue);
     const us = isUs(c);
-    const meta = [us ? 'USA' : '', c.city, us ? c.state : '', c.segment, c.employees ? c.employees + ' employees' : ''].filter(Boolean);
+    const meta = [us ? countryName(c) : '', c.city, countryOf(c) === 'US' ? c.state : '', c.segment, c.employees ? c.employees + ' employees' : ''].filter(Boolean);
     const hasTo = c.email || b.people.some(p => p.email);
 
     let primary = '';
@@ -860,9 +877,9 @@
         ${row('Phone', c.phone ? `<a href="${esc(telHref(c.phone))}">${esc(c.phone)}</a>` : '')}
         ${row('Website', link(c.website))}
         ${row('LinkedIn', link(c.linkedin, 'Profile'))}
-        ${row('Country', isUs(c) ? 'USA' : 'Israel')}
+        ${row('Country', esc(countryName(c)))}
         ${row('City', esc(c.city))}
-        ${row('State', isUs(c) ? esc(c.state) : '')}
+        ${row('State', countryOf(c) === 'US' ? esc(c.state) : '')}
         ${row('Segment', esc(c.segment))}
         ${row('Revit evidence', esc(c.revitEvidence))}
         ${row('Evidence page', link(c.evidenceUrl, 'Open'))}
@@ -1159,7 +1176,7 @@
         <div class="panel-head"><h2>Check before importing</h2><span class="small muted">${plural(add, 'new company', 'new companies')}, ${rows.length - add} skipped</span></div>
         <div class="table-wrap"><table class="preview"><thead><tr><th>Result</th><th>Company</th><th>Email</th><th>City</th><th>Revit</th><th>Website</th></tr></thead>
         <tbody>${rows.slice(0, 300).map(r => `<tr class="${r._status === 'New' ? '' : 'skip'}"><td>${esc(r._status)}</td>
-          <td dir="auto">${esc(r.nameHe || r.nameEn)}${String(r.country).toUpperCase().startsWith('US') ? ' <span class="tag">USA</span>' : ''}</td><td>${esc(r.email || '—')}${r.contactEmail ? `<div class="small muted">${esc((r.contactName ? r.contactName + ': ' : '') + r.contactEmail)}</div>` : ''}</td><td dir="auto">${esc([r.city, r.state].filter(Boolean).join(', '))}</td>
+          <td dir="auto">${esc(r.nameHe || r.nameEn)}${countryOf(r) !== 'IL' ? ` <span class="tag">${esc(countryName(r))}</span>` : ''}</td><td>${esc(r.email || '—')}${r.contactEmail ? `<div class="small muted">${esc((r.contactName ? r.contactName + ': ' : '') + r.contactEmail)}</div>` : ''}</td><td dir="auto">${esc([r.city, r.state].filter(Boolean).join(', '))}</td>
           <td>${esc(r.revitConfidence)}</td><td>${esc(r.website)}</td></tr>`).join('')}</tbody></table></div>
         ${rows.length > 300 ? `<p class="hint">Showing the first 300 rows.</p>` : ''}
         <div class="actions" style="margin-top:12px"><button class="btn primary" data-act="import-run" ${add ? '' : 'disabled'}>Import ${plural(add, 'company', 'companies')}</button>
@@ -1168,8 +1185,8 @@
       </section>`;
     }
     return `
-      <div class="page-head"><div><h1>Import list <span class="country-tag">${S.country === 'US' ? 'USA' : 'Israel'}</span></h1><p>Load the CSV from your research. Companies already in the CRM are skipped automatically.</p></div></div>
-      <div class="notice calm small" style="margin-bottom:12px">These companies will be added to <b>${S.country === 'US' ? 'USA' : 'Israel'}</b> (unless the file has a Country column). To import into the other country, switch at the top first.</div>
+      <div class="page-head"><div><h1>Import list <span class="country-tag">${groupName(S.country)}</span></h1><p>Load the CSV from your research. Companies already in the CRM are skipped automatically.</p></div></div>
+      <div class="notice calm small" style="margin-bottom:12px">These companies will be added to <b>${groupName(S.country)}</b> (unless the file has a Country column${S.country === 'OT' ? ', which other countries need: a country name or 2-letter code such as Argentina or AR' : ''}). To import into another group, switch at the top first.</div>
       <div class="stack">
         <section class="panel">
           <div class="form-grid">
@@ -1249,7 +1266,7 @@
     return rows.slice(1).map(r => {
       const o = {};
       fields.forEach((f, i) => { if (f) o[f] = cleanVal(r[i]); });
-      if (!o.country) o.country = S.country;
+      if (!o.country) o.country = S.country === 'OT' ? 'OT' : S.country;
       o.email = String(o.email || '').toLowerCase();
       o.contactEmail = String(o.contactEmail || '').toLowerCase();
       if (o.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(o.contactEmail)) o.contactEmail = '';
@@ -1341,7 +1358,7 @@
             })()}
           </section>
           <section class="panel" id="us-form">
-            <div class="panel-head"><h2>USA emails</h2></div>
+            <div class="panel-head"><h2>USA and other countries (English email)</h2></div>
             ${s.usPausedReason && s.usAuto !== 'TRUE' ? `<p class="notice danger small">${esc(s.usPausedReason)}</p>` : ''}
             <div class="form-grid">
               <label class="field full"><span>Your name in English (shown as the sender)</span><input name="senderNameEn" dir="ltr" value="${esc(s.senderNameEn)}"></label>
@@ -1349,13 +1366,14 @@
             </div>
             <label class="check" style="margin-top:8px"><input type="checkbox" name="usAuto" ${s.usAuto === 'TRUE' ? 'checked' : ''}><span>Send the English email to US companies automatically</span></label>
             <div class="form-grid" style="margin-top:8px">
-              <label class="field"><span>US emails per day</span><input name="usPerDay" type="number" min="1" max="40" value="${esc(s.usPerDay || 15)}"></label>
+              <label class="field"><span>English emails per day (USA + other countries)</span><input name="usPerDay" type="number" min="1" max="40" value="${esc(s.usPerDay || 15)}"></label>
               <label class="field"><span>Product</span><select name="usProductId">
                 ${activeProducts().map(p => `<option value="${esc(p.id)}" ${p.id === (s.usProductId || 'p_clickto3d') ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
             </div>
-            <p class="hint" style="margin-top:8px">Each US company gets one English email (no consent request: US law allows a business email with your address and an unsubscribe line). It goes Monday–Thursday 9:00–16:00 in the company’s own time zone (from its state), at least 30 minutes apart, best Revit confidence first. Never on Friday or Shabbat. It goes to the named contact if the list has one, else the general address. US emails also count toward the daily email limit. Start low (about 15): many cold emails from a free Gmail address can get it flagged.</p>
+            <p class="hint" style="margin-top:8px">Each US or other-country company gets one English email (no consent request: US law allows a business email with your address and an unsubscribe line). It goes Monday–Thursday 9:00–16:00 in the company’s own time zone (from its state or country), at least 30 minutes apart, best Revit confidence first. Never on Friday or Shabbat. It goes to the named contact if the list has one, else the general address. US emails also count toward the daily email limit. Start low (about 15): many cold emails from a free Gmail address can get it flagged.</p>
             <p class="small" style="margin-top:6px">Sent today: ${S.usToday || 0}.</p>
             <pre class="footer-preview" dir="ltr" style="margin-top:8px">${esc(usFooterText())}</pre>
+            <p class="hint">Your name line is left out when the email is already signed with your name.</p>
             <p class="form-error" id="us-error"></p>
             <div class="actions" style="margin-top:10px"><button class="btn primary" data-act="save-us">Save USA emails</button></div>
             <div class="form-grid" style="margin-top:14px">
@@ -1368,6 +1386,7 @@
           <section class="panel">
             <div class="panel-head"><h2>Added to every Hebrew product email (Israel)</h2></div>
             <pre class="footer-preview" dir="rtl">${esc(footerText())}</pre>
+            <p class="hint">Your name line is left out when the email is already signed with your name.</p>
             <p class="hint" style="margin-top:8px">The subject always starts with “פרסומת:”.</p>
           </section>
           <section class="panel">
@@ -1457,7 +1476,8 @@
         ${field('Phone', 'phone', c.phone, { dir: 'ltr', type: 'tel' })}
         ${field('Website', 'website', c.website, { dir: 'ltr' })}
         <label class="field"><span>Country</span><select name="country">
-          ${[['IL', 'Israel'], ['US', 'USA']].map(([v, l]) => `<option value="${v}" ${v === (c.id ? countryOf(c) : S.country) ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          ${(() => { const cur = c.id ? countryCode(c) : S.country; return [['IL', 'Israel'], ['US', 'USA']].concat(Object.keys(OTHER_COUNTRIES).filter(k => k !== 'OT').map(k => [k, OTHER_COUNTRIES[k]]).sort((a, b) => a[1].localeCompare(b[1])), [['OT', 'Other country']])
+            .map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`).join(''); })()}</select></label>
         ${field('State (USA, e.g. NY)', 'state', c.state, { dir: 'ltr' })}
         ${field('City', 'city', c.city)}
         ${field('Segment', 'segment', c.segment)}
@@ -1751,7 +1771,7 @@
       </div>
       <label class="field"><span>Subject</span><input name="subject" dir="ltr"></label>
       <label class="field"><span>Email text</span><textarea name="body" class="tall" dir="ltr"></textarea></label>
-      <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="ltr">${esc(usFooterText())}</pre></div>
+      <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="ltr">${esc(usFooterText(true))}</pre></div>
       <p class="hint">Each US company gets this email once. After it is sent, the CRM won’t send another.</p>
       <div class="send-status" aria-live="polite"></div>`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-send ${missing || !recips.length ? 'disabled' : ''}>Send email</button>`, { wide: true });
@@ -1802,10 +1822,10 @@
       </fieldset>` : ''}
       ${us ? `<label class="field"><span>Subject</span><input name="subject" dir="ltr"></label>
       <label class="field"><span>Email text</span><textarea name="body" class="tall" dir="ltr"></textarea></label>
-      <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="ltr">${esc(usFooterText())}</pre></div>`
+      <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="ltr">${esc(usFooterText(true))}</pre></div>`
       : `<label class="field"><span>Subject</span><div class="subject-row" dir="rtl"><span class="prefix">פרסומת:</span><input name="subject" dir="auto"></div></label>
       <label class="field"><span>Email text</span><textarea name="body" class="tall" dir="rtl"></textarea></label>
-      <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="rtl">${esc(footerText())}</pre></div>`}
+      <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="rtl">${esc(footerText(true))}</pre></div>`}
       <div class="send-status" aria-live="polite"></div>`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-send ${missing ? 'disabled' : ''}>Send email</button>`, { wide: true });
     const sel = $('[name=productId]', m);
@@ -1873,7 +1893,7 @@
     const hits = S.companies.filter(c => matchesQuery(c, q, digits)).slice(0, 12);
     box.hidden = false;
     box.innerHTML = hits.length ? hits.map(c => `<a href="#/company/${encodeURIComponent(c.id)}"><span dir="auto">${esc(primaryName(c))}</span>
-        <span class="sr-sub">${isUs(c) ? 'USA · ' : ''}${esc([c.city, c.phone, c.email].filter(Boolean).join(' · '))} ${isArchived(c) ? '(archived)' : ''}</span></a>`).join('')
+        <span class="sr-sub">${isUs(c) ? esc(countryName(c)) + ' · ' : ''}${esc([c.city, c.phone, c.email].filter(Boolean).join(' · '))} ${isArchived(c) ? '(archived)' : ''}</span></a>`).join('')
       : `<div class="sr-empty">No company found. <button class="link-btn" data-act="new-company">Add company</button></div>`;
   }
   function closeSearch() {
@@ -1963,7 +1983,7 @@
     'compose-consent': el => composeConsent(el.dataset.id),
     'compose-us': el => composeUs(el.dataset.id),
     'set-country': el => {
-      const want = el.dataset.country === 'US' ? 'US' : 'IL';
+      const want = el.dataset.country === 'US' || el.dataset.country === 'OT' ? el.dataset.country : 'IL';
       if (want === S.country) return;
       S.country = want;
       try { localStorage.setItem(LS_COUNTRY, want); } catch (e) { /* ignore */ }
