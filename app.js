@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.10.0';
+  const CLIENT_VERSION = '1.10.1';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -1366,7 +1366,7 @@
             </div>
             <label class="check" style="margin-top:8px"><input type="checkbox" name="usAuto" ${s.usAuto === 'TRUE' ? 'checked' : ''}><span>Send the English email to US companies automatically</span></label>
             <div class="form-grid" style="margin-top:8px">
-              <label class="field"><span>English emails per day (USA + other countries)</span><input name="usPerDay" type="number" min="1" max="40" value="${esc(s.usPerDay || 15)}"></label>
+              <label class="field"><span>English emails per day (USA and other countries)</span><input name="usPerDay" type="number" min="1" max="40" value="${esc(s.usPerDay || 15)}"></label>
               <label class="field"><span>Product</span><select name="usProductId">
                 ${activeProducts().map(p => `<option value="${esc(p.id)}" ${p.id === (s.usProductId || 'p_clickto3d') ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
             </div>
