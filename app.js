@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.10.4';
+  const CLIENT_VERSION = '1.10.5';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -685,6 +685,13 @@
         <a class="btn small" href="#/company/${encodeURIComponent(c.id)}">Open company</a>
         <button class="btn small ghost" data-act="review" data-id="${esc(a.id)}" data-decision="read">Mark as read</button></div>`;
     }
+    if (a.kind === 'auto_reply') {
+      return `<p class="reply-hint small">This looks like an automatic reply (out of office or similar). If it is a real answer, use the buttons below.</p>
+        <div class="actions"><button class="btn small primary" data-act="review" data-id="${esc(a.id)}" data-decision="read">Mark as read</button>
+        <button class="btn small" data-act="review" data-id="${esc(a.id)}" data-decision="unsub">Remove them</button>
+        <a class="btn small" href="#/company/${encodeURIComponent(c.id)}">Open company</a>
+        <button class="btn small ghost" data-act="compose-reply" data-thread="${esc(a.threadId)}" data-company="${esc(c.id)}">Reply</button></div>`;
+    }
     const sug = a.suggest || '';
     const hint = { yes: 'This looks like a yes.', no: 'This looks like a no.', unsub: 'This looks like a removal request.' }[sug];
     const b = (decision, text) => `<button class="btn small ${sug === decision ? 'suggested' : ''}" data-act="review" data-id="${esc(a.id)}" data-decision="${decision}">${text}</button>`;
@@ -1165,7 +1172,7 @@
     const gmail = a.threadId ? `<a class="btn small ghost" target="_blank" rel="noopener" href="${esc(gmailUrl('all/' + a.threadId))}">Open in Gmail</a>` : '';
     if (a.type === 'email_in') {
       return `<li class="act act-in ${a.unread === 'TRUE' ? 'is-new' : ''}">
-        <div class="act-head"><span class="act-kind">${a.kind === 'bounce' ? 'Email bounced' : 'Email received'}</span>${a.unread === 'TRUE' ? '<span class="new-dot">New</span>' : ''}${when}</div>
+        <div class="act-head"><span class="act-kind">${a.kind === 'bounce' ? 'Email bounced' : (a.kind === 'auto_reply' ? 'Automatic reply' : 'Email received')}</span>${a.unread === 'TRUE' ? '<span class="new-dot">New</span>' : ''}${when}</div>
         ${mailView(a)}
         ${peopleBox(a, c)}
         ${a.unread === 'TRUE' ? reviewButtons(a, c) : `<div class="act-actions"><button class="btn small" data-act="compose-reply" data-thread="${esc(a.threadId)}" data-company="${esc(c.id)}">Reply</button>${gmail}</div>`}
