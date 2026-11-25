@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.10.3';
+  const CLIENT_VERSION = '1.10.4';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -646,16 +646,41 @@
       <article class="reply ${a.kind === 'bounce' ? 'is-bounce' : ''}">
         <div class="reply-head"><a class="reply-co" href="#/company/${encodeURIComponent(c.id)}" dir="auto">${esc(primaryName(c))}</a>
           ${badgeFor(c)}<time>${esc(fmtDateTime(a.date))}</time></div>
-        ${a.kind === 'bounce' ? '<div class="small muted">Email bounced</div>' : ''}
+        ${a.kind === 'bounce' ? bounceCard(a, c) : `
         ${sentSummary(a.sent, false, c)}
         <div class="reply-mail">${mailView(a)}</div>
         ${peopleBox(a, c)}
-        ${reviewButtons(a, c)}
+        ${reviewButtons(a, c)}`}
       </article>`;
+  }
+  /** A bounce, short: which address, why, the buttons; the full message folded. */
+  function bounceInfo(a) {
+    const text = String(a.fullBody || a.body || '');
+    const me = String(S.me || '').toLowerCase();
+    const addr = (text.match(/[A-Za-z0-9][\w.+-]*@[\w-]+(?:\.[\w-]+)+/g) || [])
+      .map(x => x.toLowerCase()).find(x => x !== me && !/^(mailer-daemon|postmaster)@|@googlemail\.com$|@google\.com$/.test(x)) || '';
+    const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+    const why = lines.find(l => /not found|doesn.t exist|does not exist|no such user|unknown user|user unknown|invalid|rejected|blocked|quota|mailbox (is )?full|over quota|inactive|disabled|unable to receive|couldn.t be delivered|wasn.t delivered|not delivered|5\.\d\.\d|4\.\d\.\d/i.test(l)) || lines[0] || '';
+    const soft = /quota|full|temporar|try again|delay|4\.\d\.\d/i.test(text) && !/5\.1\.1|not found|does not exist|no such user/i.test(text);
+    const blocked = !soft && /message blocked|blocked|spam|policy|reputation/i.test(text) && !/address not found|does not exist|no such user|5\.1\.1/i.test(text);
+    let plain = why.replace(/^\*+\s*|\s*\*+$/g, '');
+    if (/^Status:\s*4\./i.test(plain)) plain = 'Delayed: their mail server did not answer (' + plain.replace(/^Status:\s*/i, '') + ')';
+    return { addr, why: plain.slice(0, 220), soft, blocked };
+  }
+  function bounceCard(a, c) {
+    const b = bounceInfo(a);
+    return `<div class="bounce-box">
+        <div><b>Email bounced</b>${b.addr ? ` · <span dir="ltr" class="addr">${esc(b.addr)}</span>` : ''}</div>
+        ${b.why ? `<div class="small muted" dir="auto">${esc(b.why)}</div>` : ''}
+        ${b.soft ? '<div class="small">Looks temporary (mailbox full or delayed). The address is probably fine: just mark it as read.</div>' : ''}
+        ${b.blocked ? '<div class="small">Their server blocked the email (a spam filter). The address is probably fine, so “Bad address” is not needed: mark it as read.</div>' : ''}
+      </div>
+      ${reviewButtons(a, c)}
+      <details class="bounce-full"><summary class="small">Show the full bounce message</summary><div class="reply-mail">${mailView(a)}</div></details>`;
   }
   function reviewButtons(a, c) {
     if (a.kind === 'bounce') {
-      return `<p class="reply-hint">This email bounced, so the request never arrived. “Bad address” removes the address (it’s kept in the notes) and sets the company back to “Not contacted”, so you can add a correct address later.</p>
+      return `<p class="reply-hint small">“Bad address” removes the address (kept in the notes) and sets the company back to “Not contacted”.</p>
         <div class="actions"><button class="btn small primary" data-act="bounced" data-id="${esc(a.id)}">Bad address</button>
         <a class="btn small" href="#/company/${encodeURIComponent(c.id)}">Open company</a>
         <button class="btn small ghost" data-act="review" data-id="${esc(a.id)}" data-decision="read">Mark as read</button></div>`;
