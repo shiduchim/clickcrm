@@ -658,7 +658,7 @@
     const text = String(a.fullBody || a.body || '');
     const me = String(S.me || '').toLowerCase();
     const addr = (text.match(/[A-Za-z0-9][\w.+-]*@[\w-]+(?:\.[\w-]+)+/g) || [])
-      .map(x => x.toLowerCase()).find(x => x !== me && !/^(mailer-daemon|postmaster)@|@googlemail\.com$|@google\.com$/.test(x)) || '';
+      .map(x => x.toLowerCase()).find(x => x !== me && !/^(mailer-daemon|postmaster|microsoftexchange[0-9a-f]+)@|@googlemail\.com$|@google\.com$/.test(x)) || '';
     const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
     const why = lines.find(l => /not found|doesn.t exist|does not exist|no such user|unknown user|user unknown|invalid|rejected|blocked|quota|mailbox (is )?full|over quota|inactive|disabled|unable to receive|couldn.t be delivered|wasn.t delivered|not delivered|5\.\d\.\d|4\.\d\.\d/i.test(l)) || lines[0] || '';
     const soft = /quota|full|temporar|try again|delay|4\.\d\.\d/i.test(text) && !/5\.1\.1|not found|does not exist|no such user/i.test(text);
@@ -1064,7 +1064,7 @@
     const take = (mail, name, fromText) => {
       mail = String(mail || '').trim().toLowerCase().replace(/^[-._+]+/, '').replace(/[.,;:)]+$/, '');
       if (!/^[^\s@<>]+@[^\s@<>]+\.[a-z]{2,}$/.test(mail) || mail === me || known.has(mail) || found.has(mail)) return;
-      if (/^(mailer-daemon|postmaster|no-?reply|donotreply)@/.test(mail)) return;
+      if (/^(mailer-daemon|postmaster|microsoftexchange[0-9a-f]+|no-?reply|donotreply)@/.test(mail)) return;
       const dom = mail.split('@')[1];
       if (!fromText && !doms.some(d => dom === d || dom.endsWith('.' + d))) return;
       found.set(mail, cleanName(name, mail));
