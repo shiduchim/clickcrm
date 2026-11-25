@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.10.5';
+  const CLIENT_VERSION = '1.10.6';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -345,7 +345,7 @@
     S.companies = b.companies || [];
     S.people = b.people || [];
     S.tasks = b.tasks || [];
-    S.unread = b.unread || [];
+    S.unread = notHidden(b.unread || []);
     S.products = b.products || [];
     S.settings = b.settings || {};
     S.me = b.me || S.email;
@@ -376,13 +376,35 @@
     if (data.boot) applyBoot(data.boot);
     if (data.bundle) applyBundle(data.bundle);
     if (data.tasks) S.tasks = data.tasks;
-    if (data.unread) S.unread = data.unread;
+    if (data.unread) S.unread = notHidden(data.unread);
     if (data.products) S.products = data.products;
     if (data.settings) S.settings = data.settings;
     if (typeof data.sentToday === 'number') S.sentToday = data.sentToday;
     if (data.refetch) await refreshAll(true);
     updateCounts();
     render();
+  }
+  // Replies already answered on this device: hidden at once, while the save runs in the background.
+  const hiddenReplies = new Set();
+  let reviewChain = Promise.resolve();
+  function notHidden(list) { return hiddenReplies.size ? list.filter(a => !hiddenReplies.has(a.id)) : list; }
+  /** Removes the reply card at once and saves in the background, one save after another. */
+  function quickReview(el, action, payload, doneText) {
+    const id = el.dataset.id;
+    hiddenReplies.add(id);
+    S.unread = S.unread.filter(a => a.id !== id);
+    updateCounts(); render();
+    toast(doneText);
+    reviewChain = reviewChain.then(async () => {
+      try {
+        await write(action, payload, doneText);
+        hiddenReplies.delete(id);
+      } catch (e) {
+        hiddenReplies.delete(id);
+        toast(e.message, 'error');
+        await refreshAll(true);
+      }
+    });
   }
   async function refreshAll(silent) {
     try {
@@ -2019,6 +2041,13 @@
     },
     'change-consent': el => consentModal(companyById(el.dataset.id)),
     'review': async el => {
+      const labels0 = { yes: 'Marked as agreed', no: 'Marked as said no', unsub: 'Removed. No more emails will be sent', read: 'Marked as read' };
+      const a0 = S.unread.find(x => x.id === el.dataset.id);
+      const c0 = a0 && companyById(a0.companyId);
+      const risky = el.dataset.decision === 'yes' && c0 && (status(c0) === CONSENT.UNSUB || status(c0) === CONSENT.NO);
+      if (a0 && !risky && route().name !== 'company') {
+        return quickReview(el, 'reviewReply', { activityId: el.dataset.id, decision: el.dataset.decision }, labels0[el.dataset.decision]);
+      }
       const box = el.closest('.actions');
       $$('button', box).forEach(b => { b.disabled = true; });
       const labels = { yes: 'Marked as agreed', no: 'Marked as said no', unsub: 'Removed. No more emails will be sent', read: 'Marked as read' };
@@ -2028,6 +2057,9 @@
       } catch (e) { toast(e.message, 'error'); $$('button', box).forEach(b => { b.disabled = false; }); }
     },
     'bounced': async el => {
+      if (route().name !== 'company' && S.unread.some(x => x.id === el.dataset.id)) {
+        return quickReview(el, 'markBounced', { activityId: el.dataset.id }, 'Address removed. The company is back to “Not contacted”.');
+      }
       const box = el.closest('.actions');
       $$('button', box).forEach(b => { b.disabled = true; });
       try {
