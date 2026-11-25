@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.10.1';
+  const CLIENT_VERSION = '1.10.3';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -436,6 +436,20 @@
     const view = $('#view');
     const active = document.activeElement;
     const keep = active && view.contains(active) && active.id ? { id: active.id, start: active.selectionStart, end: active.selectionEnd } : null;
+    // Keep what the user is typing when the screen redraws itself (auto refresh, saving another panel).
+    const hash = location.hash;
+    const dirty = [];
+    if (S.lastRenderHash === hash && !S.freshForm) {
+      view.querySelectorAll('input, textarea, select').forEach(el => {
+        const key = el.id || (el.name ? (el.closest('form') ? (el.closest('form').id || '') : '') + ':' + el.name : '');
+        if (!key || el.type === 'file') return;
+        if (el.type === 'checkbox' || el.type === 'radio') { if (el.checked !== el.defaultChecked) dirty.push({ key, checked: el.checked, val: el.value }); }
+        else if (el.tagName === 'SELECT') { const d = [...el.options].find(o => o.defaultSelected); if (el.value !== (d ? d.value : (el.options[0] || {}).value)) dirty.push({ key, val: el.value }); }
+        else if (el.value !== el.defaultValue) dirty.push({ key, val: el.value });
+      });
+    }
+    S.freshForm = false;
+    S.lastRenderHash = hash;
     let html;
     switch (r.name) {
       case 'companies': html = viewCompanies(); break;
@@ -446,6 +460,14 @@
       default: html = viewToday();
     }
     view.innerHTML = html;
+    if (dirty.length) {
+      view.querySelectorAll('input, textarea, select').forEach(el => {
+        const key = el.id || (el.name ? (el.closest('form') ? (el.closest('form').id || '') : '') + ':' + el.name : '');
+        const d = dirty.find(x => x.key === key && (x.checked === undefined || x.val === el.value));
+        if (!d) return;
+        if (d.checked !== undefined) el.checked = d.checked; else el.value = d.val;
+      });
+    }
     if (keep) {
       const el = document.getElementById(keep.id);
       if (el) { el.focus(); try { el.setSelectionRange(keep.start, keep.end); } catch (e) { /* not a text field */ } }
@@ -535,7 +557,7 @@
             <div class="panel-head"><h2>${us ? 'Ready to email' : 'Ready to contact'}<span class="count">${readyAll.length || ''}</span></h2>
               <div class="actions"><a href="#/companies" data-act="filter-status" data-status="${esc(CONSENT.NONE)}" class="small">See all</a>
               ${readyAll.length && !us ? '<button class="btn small primary" data-act="batch">Send batch now</button>' : ''}</div></div>
-            <div class="meter"><span>Sent today (Israel and USA together): ${S.sentToday} of ${limit}</span><span class="meter-bar"><i style="width:${pct}%"></i></span></div>
+            <div class="meter"><span>Sent today (all countries together): ${S.sentToday} of ${limit}</span><span class="meter-bar"><i style="width:${pct}%"></i></span></div>
             ${us ? autoUsLine() : autoLine() + autoProductLine()}
             ${ready.length ? ready.map(c => `
               <div class="ready-row">
@@ -546,7 +568,7 @@
                   : `<button class="btn small" data-act="compose-consent" data-id="${esc(c.id)}">Send request</button>`}
               </div>`).join('') : (live.length
                 ? '<p class="empty">Everyone with an email address has been contacted. Import more companies to continue.</p>'
-                : `<p class="empty">No ${us ? 'US ' : ''}companies yet. <a href="#/import">Import your list</a> to start.</p>`)}
+                : `<p class="empty">No ${S.country === 'IL' ? '' : groupName(S.country) + ' '}companies yet. <a href="#/import">Import your list</a> to start.</p>`)}
           </section>
         </div>
         <div class="stack">
@@ -816,7 +838,7 @@
     if (st === CONSENT.NO) text = 'They said no. The CRM blocks all emails to this company.';
     if (st === CONSENT.UNSUB) text = 'They unsubscribed. The CRM blocks all emails to this company.';
     return `<section class="panel">
-      <div class="panel-head"><h2>Outreach (USA)</h2><button class="link-btn" data-act="change-consent" data-id="${esc(c.id)}">Change</button></div>
+      <div class="panel-head"><h2>Outreach (English email)</h2><button class="link-btn" data-act="change-consent" data-id="${esc(c.id)}">Change</button></div>
       <p class="small" style="margin:0 0 6px">${badgeFor(c)} ${c.consentRequestDate ? 'Emailed ' + esc(fmtDateTime(c.consentRequestDate)) : ''}</p>
       <p class="small" style="margin:0">${esc(text)}</p>
       <p class="small muted" style="margin:6px 0 0">Their time now: ${esc(usLocalTime(c))}${c.state ? '' : ' · add the state (Edit) for the right time zone'}</p>
@@ -1015,7 +1037,7 @@
     known.add(String(c.email || '').toLowerCase());
     const found = new Map();
     const take = (mail, name, fromText) => {
-      mail = String(mail || '').trim().toLowerCase().replace(/[.,;:)]+$/, '');
+      mail = String(mail || '').trim().toLowerCase().replace(/^[-._+]+/, '').replace(/[.,;:)]+$/, '');
       if (!/^[^\s@<>]+@[^\s@<>]+\.[a-z]{2,}$/.test(mail) || mail === me || known.has(mail) || found.has(mail)) return;
       if (/^(mailer-daemon|postmaster|no-?reply|donotreply)@/.test(mail)) return;
       const dom = mail.split('@')[1];
@@ -1029,7 +1051,7 @@
     fromHead(a.fromAddr); fromHead(a.toAddr); fromHead(a.ccAddr);
     splitThread(a.fullBody || a.body).forEach(m => {
       fromHead(m.head.from); fromHead(m.head.to); fromHead(m.head.cc);
-      (m.body.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) || []).forEach(e => take(e, '', true));
+      (m.body.match(/[A-Za-z0-9][\w.+-]*@[\w-]+(?:\.[\w-]+)+/g) || []).forEach(e => take(e, '', true));
     });
     return [...found].map(([email, name]) => ({ email, name }));
   }
@@ -1066,7 +1088,8 @@
     const prod = productById(pid);
     if (!prod) return '';
     let ps = {};
-    try { ps = JSON.parse(c.productStatus || '{}') || {}; } catch (e) { /* ignore */ }
+    if (c.productStatus && typeof c.productStatus === 'object') ps = c.productStatus;
+    else { try { ps = JSON.parse(c.productStatus || '{}') || {}; } catch (e) { /* ignore */ } }
     if (ps[pid] || out.some(a => a.kind === 'product' && a.productId === pid)) return '';
     const people = S.people.filter(p => p.companyId === c.id && p.deleted !== 'TRUE');
     const ids = contactIds(people);
@@ -1296,7 +1319,7 @@
         break;
       }
     }
-    S.importRows = null;
+    S.importRows = null; S.freshForm = true;
     await refreshAll(true);
     toast(`Imported ${plural(added, 'company', 'companies')}` + (skipped ? `, ${skipped} skipped` : '') + (queued ? `, ${queued} waiting to save` : ''));
     go('#/companies');
@@ -1364,18 +1387,18 @@
               <label class="field full"><span>Your name in English (shown as the sender)</span><input name="senderNameEn" dir="ltr" value="${esc(s.senderNameEn)}"></label>
               <label class="field full"><span>Postal address in English (required by US law)</span><input name="senderAddressEn" dir="ltr" value="${esc(s.senderAddressEn)}" placeholder="Street 1, Safed, Israel"></label>
             </div>
-            <label class="check" style="margin-top:8px"><input type="checkbox" name="usAuto" ${s.usAuto === 'TRUE' ? 'checked' : ''}><span>Send the English email to US companies automatically</span></label>
+            <label class="check" style="margin-top:8px"><input type="checkbox" name="usAuto" ${s.usAuto === 'TRUE' ? 'checked' : ''}><span>Send the English email automatically (USA and other countries)</span></label>
             <div class="form-grid" style="margin-top:8px">
               <label class="field"><span>English emails per day (USA and other countries)</span><input name="usPerDay" type="number" min="1" max="40" value="${esc(s.usPerDay || 15)}"></label>
               <label class="field"><span>Product</span><select name="usProductId">
                 ${activeProducts().map(p => `<option value="${esc(p.id)}" ${p.id === (s.usProductId || 'p_clickto3d') ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
             </div>
-            <p class="hint" style="margin-top:8px">Each US or other-country company gets one English email (no consent request: US law allows a business email with your address and an unsubscribe line). It goes Monday–Thursday 9:00–16:00 in the company’s own time zone (from its state or country), at least 30 minutes apart, best Revit confidence first. Never on Friday or Shabbat. It goes to the named contact if the list has one, else the general address. US emails also count toward the daily email limit. Start low (about 15): many cold emails from a free Gmail address can get it flagged.</p>
+            <p class="hint" style="margin-top:8px">Each US or other-country company gets one English email (no consent request: US law allows a business email with your address and an unsubscribe line). It goes Monday–Thursday 9:00–16:00 in the company’s own time zone (from its state or country), at least 30 minutes apart, best Revit confidence first. Never on Friday or Shabbat. It goes to the named contact if the list has one, else the general address. English emails also count toward the daily email limit. Start low (about 15): many cold emails from a free Gmail address can get it flagged.</p>
             <p class="small" style="margin-top:6px">Sent today: ${S.usToday || 0}.</p>
             <pre class="footer-preview" dir="ltr" style="margin-top:8px">${esc(usFooterText())}</pre>
             <p class="hint">Your name line is left out when the email is already signed with your name.</p>
             <p class="form-error" id="us-error"></p>
-            <div class="actions" style="margin-top:10px"><button class="btn primary" data-act="save-us">Save USA emails</button></div>
+            <div class="actions" style="margin-top:10px"><button class="btn primary" data-act="save-us">Save English emails</button></div>
             <div class="form-grid" style="margin-top:14px">
               <label class="field full"><span>Send a test of the English email to</span><input name="usTestTo" id="us-test-to" type="email" dir="ltr" placeholder="your personal email"></label>
             </div>
@@ -1611,8 +1634,8 @@
           ${field('Subject', 'pitchSubject', p.pitchSubject, { full: true })}
           <label class="field full"><span>Email text</span><textarea name="pitchBody" class="tall" dir="rtl">${esc(p.pitchBody)}</textarea></label>
         </fieldset>
-        <fieldset class="lang-box us full"><legend><span class="lang-flag us">USA</span> English email</legend>
-          <p class="hint">Sent once to each US company. Your English address and the unsubscribe line are added automatically. No “פרסומת:”.</p>
+        <fieldset class="lang-box us full"><legend><span class="lang-flag us">USA + other</span> English email</legend>
+          <p class="hint">Sent once to each USA or other-country company. Your English address and the unsubscribe line are added automatically. No “פרסומת:”.</p>
           ${field('Subject', 'pitchSubjectEn', p.pitchSubjectEn, { full: true, dir: 'ltr' })}
           <label class="field full"><span>Email text</span><textarea name="pitchBodyEn" class="tall" dir="ltr">${esc(p.pitchBodyEn)}</textarea></label>
         </fieldset>
@@ -1762,8 +1785,8 @@
     contacts.concat([c.email], people.map(p => p.email)).forEach(e => { e = String(e || '').toLowerCase(); if (e && recips.indexOf(e) < 0) recips.push(e); });
     const nameOf = e => { const p = people.find(x => String(x.email || '').toLowerCase() === e); return p ? p.name : ''; };
     const open = usOpenNow(c);
-    const m = openModal('Send email (USA)', `
-      ${missing ? '<div class="notice danger">Add your name and postal address in English first (<a href="#/settings" data-act="close-modal">Settings → USA emails</a>). US law requires them.</div>' : ''}
+    const m = openModal('Send English email', `
+      ${missing ? '<div class="notice danger">Add your name and postal address in English first (<a href="#/settings" data-act="close-modal">Settings → English email</a>). The law requires them.</div>' : ''}
       <p class="small">Their time now: <b>${esc(usLocalTime(c))}</b>${open ? '' : ' · outside their working hours (the automatic queue would wait for Mon–Thu 9:00–16:00)'}</p>
       <div class="form-grid">
         <label class="field"><span>Product</span><select name="productId">${prods.map(p => `<option value="${esc(p.id)}" ${p.id === p0.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
@@ -1772,7 +1795,7 @@
       <label class="field"><span>Subject</span><input name="subject" dir="ltr"></label>
       <label class="field"><span>Email text</span><textarea name="body" class="tall" dir="ltr"></textarea></label>
       <div><span class="small muted">Added automatically at the end</span><pre class="footer-preview" dir="ltr">${esc(usFooterText(true))}</pre></div>
-      <p class="hint">Each US company gets this email once. After it is sent, the CRM won’t send another.</p>
+      <p class="hint">Each company gets this English email once. After it is sent, the CRM won’t send another.</p>
       <div class="send-status" aria-live="polite"></div>`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-send ${missing || !recips.length ? 'disabled' : ''}>Send email</button>`, { wide: true });
     const sel = $('[name=productId]', m);
@@ -1869,7 +1892,7 @@
       ${last.body ? `<div class="proof" dir="auto" style="border-left-color:var(--accent)">${esc(String(last.body).slice(0, 600))}</div>` : ''}
       ${isBlocked ? `<div class="notice danger">This company asked not to be contacted. Only reply to answer them, for example to confirm they were removed.</div>
         <label class="check"><input type="checkbox" name="confirm"><span>This reply has no advertising.</span></label>` : ''}
-      <label class="field"><span>Your reply</span><textarea name="body" class="tall" dir="rtl"></textarea></label>
+      <label class="field"><span>Your reply</span><textarea name="body" class="tall" dir="${c && isUs(c) ? 'ltr' : 'rtl'}"></textarea></label>
       <div class="send-status" aria-live="polite"></div>`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-send>Send reply</button>`, { wide: true });
     sendFlow(m, {
@@ -1893,7 +1916,7 @@
     const hits = S.companies.filter(c => matchesQuery(c, q, digits)).slice(0, 12);
     box.hidden = false;
     box.innerHTML = hits.length ? hits.map(c => `<a href="#/company/${encodeURIComponent(c.id)}"><span dir="auto">${esc(primaryName(c))}</span>
-        <span class="sr-sub">${isUs(c) ? esc(countryName(c)) + ' · ' : ''}${esc([c.city, c.phone, c.email].filter(Boolean).join(' · '))} ${isArchived(c) ? '(archived)' : ''}</span></a>`).join('')
+        <span class="sr-sub">${isUs(c) ? esc(countryName(c)) + ' · ' : ''}${[c.city, c.phone, c.email].filter(Boolean).map(v => '<bdi>' + esc(v) + '</bdi>').join(' · ')} ${isArchived(c) ? '(archived)' : ''}</span></a>`).join('')
       : `<div class="sr-empty">No company found. <button class="link-btn" data-act="new-company">Add company</button></div>`;
   }
   function closeSearch() {
@@ -1997,8 +2020,8 @@
       err.textContent = '';
       el.disabled = true;
       try {
-        const r = await write('saveSettings', { senderNameEn: d.senderNameEn, senderAddressEn: d.senderAddressEn, usAuto: !!d.usAuto, usPerDay: d.usPerDay, usProductId: d.usProductId }, 'USA emails saved');
-        if (r) toast(d.usAuto ? 'Automatic US emails are on' : 'USA settings saved');
+        const r = await write('saveSettings', { senderNameEn: d.senderNameEn, senderAddressEn: d.senderAddressEn, usAuto: !!d.usAuto, usPerDay: d.usPerDay, usProductId: d.usProductId }, 'English emails saved');
+        if (r) toast(d.usAuto ? 'Automatic English emails are on' : 'English email settings saved');
       } catch (e) { err.textContent = e.message; }
       el.disabled = false;
     },
@@ -2057,7 +2080,7 @@
       try { S.importRows = prepareImport($('#import-text').value); render(); } catch (e) { toast(e.message, 'error'); }
     },
     'import-run': () => runImport(),
-    'import-clear': () => { S.importRows = null; render(); },
+    'import-clear': () => { S.importRows = null; S.freshForm = true; render(); },
     'flush': () => flushOutbox(),
     'process-inbox': async el => {
       el.disabled = true;

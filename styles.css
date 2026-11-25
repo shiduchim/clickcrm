@@ -15,7 +15,7 @@
   --st-sent: #8A5A00;   --st-sent-bg: #FFF1D6;
   --st-yes: #146C43;    --st-yes-bg: #DDF3E6;
   --st-no: #4B5563;     --st-no-bg: #E6E9ED;
-  --st-unsub: #A8261B;  --st-unsub-bg: #FCE3E0;
+  --st-unsub: #6B3FA0;  --st-unsub-bg: #EFE7FA;
 
   --font: "IBM Plex Sans", "IBM Plex Sans Hebrew", system-ui, "Segoe UI", Arial, sans-serif;
   --r-sm: 6px;
@@ -31,7 +31,7 @@
     --st-sent: #F2C066; --st-sent-bg: #3A2E14;
     --st-yes: #6FD39E; --st-yes-bg: #173426;
     --st-no: #B5BDC7; --st-no-bg: #2A313A;
-    --st-unsub: #FF8A7D; --st-unsub-bg: #3D1C19;
+    --st-unsub: #C3A6F0; --st-unsub-bg: #2B2140;
     color-scheme: dark;
   }
 }
@@ -216,7 +216,8 @@ pre { font-family: var(--font); white-space: pre-wrap; margin: 0; }
 .ready-row:first-child { border-top: 0; }
 .ready-row .grow { flex: 1; min-width: 0; }
 .ready-row a { color: var(--ink); text-decoration: none; font-weight: 500; }
-.status-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.status-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+.status-strip button { min-width: 0; overflow-wrap: anywhere; }
 .status-strip button {
   text-align: left; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--sunken); cursor: pointer;
 }
@@ -391,8 +392,11 @@ table.preview tr.skip td { color: var(--muted); }
   .tabbar .nav-count { position: absolute; top: 6px; right: calc(50% - 34px); }
   .co-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
   .co-row .co-meta, .co-row .co-conf { display: none; }
+  .co-row .co-status { grid-column: 1 / -1; justify-content: flex-start; }
+  .search-wrap { flex: 1 1 100%; max-width: none; order: 2; }
+  .meter { flex-wrap: wrap; }
+  .meter-bar { flex-basis: 100%; }
   .form-grid { grid-template-columns: 1fr; }
-  .status-strip { grid-template-columns: repeat(3, 1fr); }
   h1 { font-size: 1.35rem; }
   .modal-root { align-items: flex-end; padding: 0; }
   .modal { width: 100%; max-height: 92vh; border-radius: var(--r-md) var(--r-md) 0 0; padding-bottom: env(safe-area-inset-bottom, 0px); }
@@ -412,8 +416,8 @@ table.preview tr.skip td { color: var(--muted); }
 .mail-head dt { color: var(--muted); font-weight: 500; }
 .mail-head dd { margin: 0; overflow-wrap: anywhere; }
 .mail-head dd > span[dir="auto"] { display: inline-block; }
-.addr { display: inline-block; margin-right: 2px; }
-.addr-mail { color: var(--muted); }
+.addr { display: inline-block; margin-right: 2px; max-width: 100%; overflow-wrap: anywhere; }
+.addr-mail { color: var(--muted); overflow-wrap: anywhere; }
 .addr > span[dir="auto"] + .addr-mail::before { content: "<"; }
 .addr > span[dir="auto"] + .addr-mail::after { content: ">"; }
 .mail-new { margin-top: 8px; }
@@ -459,18 +463,18 @@ table.preview tr.skip td { color: var(--muted); }
 .country-switch .btn:first-child { border-radius: 6px 0 0 6px; }
 .country-switch .btn:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
 .country-switch .btn[aria-pressed="true"] { background: var(--accent, #1D5BB6); color: var(--accent-ink, #fff); border-color: transparent; }
-body.country-us .country-switch .btn[aria-pressed="true"] { background: #B23A48; color: #fff; }
+body.country-us .country-switch .btn[aria-pressed="true"] { background: #0E7C7B; color: #fff; }
 .country-tag { display: inline-block; vertical-align: middle; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600;
   background: var(--accent, #1D5BB6); color: var(--accent-ink, #fff); }
-body.country-us .country-tag { background: #B23A48; color: #fff; }
+body.country-us .country-tag { background: #0E7C7B; color: #fff; }
 
 /* 1.8.1: Hebrew / English email boxes in the product window */
 .lang-box { border: 2px solid var(--accent, #1D5BB6); border-radius: 10px; padding: 10px 14px 14px; margin: 6px 0; display: grid; gap: 10px; min-width: 0; }
-.lang-box.us { border-color: #B23A48; }
+.lang-box.us { border-color: #0E7C7B; }
 .lang-box legend { font-weight: 600; padding: 0 6px; }
 .lang-box .hint { margin: 0; }
 .lang-flag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.75rem; color: #fff; background: #1D5BB6; margin-right: 4px; }
-.lang-flag.us { background: #B23A48; }
+.lang-flag.us { background: #0E7C7B; }
 
 /* 1.10.0: Israel / USA / Other */
 .country-switch .btn + .btn { margin-left: -1px; }
