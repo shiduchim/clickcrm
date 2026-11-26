@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const CLIENT_VERSION = '1.10.6';
+  const CLIENT_VERSION = '1.11.0';
   const CFG = window.CLICKCRM_CONFIG || {};
   const LS_TOKEN = 'clickcrm.token';
   const LS_OUTBOX = 'clickcrm.outbox';
@@ -1145,6 +1145,10 @@
     if (c.productStatus && typeof c.productStatus === 'object') ps = c.productStatus;
     else { try { ps = JSON.parse(c.productStatus || '{}') || {}; } catch (e) { /* ignore */ } }
     if (ps[pid] || out.some(a => a.kind === 'product' && a.productId === pid)) return '';
+    let prod2 = prod;
+    if (s.autoFirstProductId && s.autoFirstProductId !== pid && !Object.keys(ps).some(k => ps[k]) && !out.some(a => a.kind === 'product')) {
+      prod2 = productById(s.autoFirstProductId) || prod;
+    }
     const people = S.people.filter(p => p.companyId === c.id && p.deleted !== 'TRUE');
     const ids = contactIds(people);
     const who = ids.length
@@ -1153,9 +1157,9 @@
     const unread = S.unread.filter(a => a.companyId === c.id && a.type === 'email_in').length;
     const send = `<button class="btn small" data-act="compose-product" data-id="${esc(c.id)}">Send now</button>`;
     let text;
-    if (unread) text = `${esc(prod.name)} is waiting: ${plural(unread, 'unread reply', 'unread replies')}. Mark ${unread > 1 ? 'them' : 'it'} as read and it goes automatically to ${esc(who)}.`;
-    else if (s.autoProduct === 'TRUE' && s.autoProductId === pid) text = `${esc(prod.name)} will go automatically to ${esc(who)} (Sun–Thu 08:00–17:00, one every 10 minutes).`;
-    else text = `${esc(prod.name)} not sent yet. Automatic product emails are off; it will go to ${esc(who)} when you send it.`;
+    if (unread) text = `${esc(prod2.name)} is waiting: ${plural(unread, 'unread reply', 'unread replies')}. Mark ${unread > 1 ? 'them' : 'it'} as read and it goes automatically to ${esc(who)}.`;
+    else if (s.autoProduct === 'TRUE' && s.autoProductId === pid) text = `${esc(prod2.name)} will go automatically to ${esc(who)} (Sun–Thu 08:00–17:00, one every 10 minutes).`;
+    else text = `${esc(prod2.name)} not sent yet. Automatic product emails are off; it will go to ${esc(who)} when you send it.`;
     return `<div class="sent-next ${unread ? 'is-held' : ''}" dir="auto"><span>${text}</span>${unread ? '' : send}</div>`;
   }
 
@@ -1426,6 +1430,9 @@
               <label class="check"><input type="checkbox" name="autoProduct" ${s.autoProduct === 'TRUE' ? 'checked' : ''}><span>Send the product email automatically to companies that said yes</span></label>
               <label class="field" style="margin-top:8px"><span>Product</span><select name="autoProductId">
                 ${prods.map(p => `<option value="${esc(p.id)}" ${p.id === pid ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+              <label class="field" style="margin-top:8px"><span>Companies that got no product email yet get</span><select name="autoFirstProductId">
+                <option value="" ${!s.autoFirstProductId ? 'selected' : ''}>The same product</option>
+                ${prods.map(p => `<option value="${esc(p.id)}" ${p.id === s.autoFirstProductId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
               <p class="hint" style="margin-top:8px">One email every 10 minutes, Sunday–Thursday 08:00–17:00, using the product’s pitch text. It goes to the address that said yes. Each company gets it once. Companies with an unread reply wait until you review it.</p>
               <p class="small" style="margin-top:6px">Waiting: ${q.ready.length}. Sent automatically today: ${S.autoProductToday || 0}.</p>
               ${q.manual.length ? `<p class="small" style="margin-top:6px">Send these yourself, because you added people there (choose who gets it): ${q.manual.map(c => `<a href="#/company/${encodeURIComponent(c.id)}" dir="auto">${esc(primaryName(c))}</a>`).join(', ')}</p>` : ''}
@@ -1694,11 +1701,21 @@
           <label class="field full"><span>Email text</span><textarea name="pitchBodyEn" class="tall" dir="ltr">${esc(p.pitchBodyEn)}</textarea></label>
         </fieldset>
         <p class="hint full">Placeholders for both: {company} {sender} {product} {link} {store}</p>
+        ${(() => {
+          const others = (S.products || []).filter(x => x.id !== p.id);
+          if (!others.length) return '';
+          const cov = String(p.covers || '').split(',');
+          return `<fieldset class="full"><legend class="small">This email also tells about (they count as sent, so nobody gets them again)</legend>
+            ${others.map(x => `<label class="check"><input type="checkbox" name="cover_${esc(x.id)}" ${cov.includes(x.id) ? 'checked' : ''}><span>${esc(x.name)}</span></label>`).join('')}</fieldset>`;
+        })()}
         <label class="check full"><input type="checkbox" name="active" ${p.active === 'TRUE' ? 'checked' : ''}><span>Active (can be sent)</span></label>
       </div>`,
       `<button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-save>${p.id ? 'Save product' : 'Add product'}</button>`, { wide: true });
     bindSave(m, 'saveProduct', d => {
       if (!d.name) throw new Error('Enter a product name.');
+      const covers = Object.keys(d).filter(k => k.startsWith('cover_') && d[k]).map(k => k.slice(6));
+      Object.keys(d).forEach(k => { if (k.startsWith('cover_')) delete d[k]; });
+      d.covers = covers.join(',');
       return Object.assign(d, p.id ? { id: p.id } : {});
     }, 'Product saved');
   }
@@ -2134,7 +2151,7 @@
       err.textContent = '';
       el.disabled = true;
       try {
-        const r = await write('saveSettings', { autoProduct: !!d.autoProduct, autoProductId: d.autoProductId }, 'Automatic product emails saved');
+        const r = await write('saveSettings', { autoProduct: !!d.autoProduct, autoProductId: d.autoProductId, autoFirstProductId: d.autoFirstProductId || '' }, 'Automatic product emails saved');
         if (r) toast(d.autoProduct ? 'Automatic product emails are on' : 'Automatic product emails are off');
       } catch (e) { err.textContent = e.message; }
       el.disabled = false;
